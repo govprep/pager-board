@@ -1,0 +1,27 @@
+{
+  "name": "pager-board",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "feeder": "tsx feeder/index.ts",
+    "feeder:auth-telegram": "tsx feeder/auth-telegram.ts",
+    "seed:live": "tsx scripts/seed-live.ts"
+  },
+  "dependencies": {
+    "next": "^16.2.9",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.21",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.1.5",
+    "telegram": "^2.26.22",
+    "tsx": "^4.19.2",
+    "typescript": "5.8.3"
+  }
+}
