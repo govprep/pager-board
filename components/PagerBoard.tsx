@@ -121,11 +121,6 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
     return [...map.values()];
   }, [filtered]);
 
-  const totalMerged = useMemo(() => {
-    const keys = new Set(incidents.map(i => i.incidentNo || i.id));
-    return keys.size;
-  }, [incidents]);
-
   const grouped = useMemo(() => {
     const map = new Map<string, typeof merged>();
     for (const m of merged) {
@@ -164,12 +159,6 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
         <div className="clock">{now ? fmt(now.toISOString(), true) : "--:--:--"}</div>
       </header>
 
-      {/* count bar */}
-      <div className="pagebar">
-        {merged.length === totalMerged
-          ? `${merged.length} incidents`
-          : `${merged.length} of ${totalMerged} incidents`}
-      </div>
 
       {/* table */}
       <div className="list-wrap">

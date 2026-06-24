@@ -126,17 +126,6 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
   align-items: center;
 }
 
-/* ── pagebar ─────────────────────────────────────────── */
-.pagebar {
-  display: flex;
-  align-items: center;
-  padding: 8px 20px;
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--text-3);
-  letter-spacing: 0.04em;
-  flex: none;
-}
 
 /* ── table ───────────────────────────────────────────── */
 .list-wrap { flex: 1; overflow-y: auto; }
@@ -277,9 +266,6 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   .topbar { padding: 0 12px; gap: 8px; }
   .topbar-spacer { display: none; }
   .search { width: auto; flex: 1; min-width: 0; }
-
-  /* Count bar */
-  .pagebar { padding: 6px 12px; }
 
   /* Convert table → cards */
   .list-wrap table,
