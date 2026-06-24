@@ -2,10 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Incident } from "@/lib/types";
-
-function minutesAgo(iso: string) {
-  return Math.floor((Date.now() - Date.parse(iso)) / 60000);
-}
+import { getBrowserClient } from "@/lib/supabase-browser";
 
 function fmt(iso: string, secs = false) {
   return new Date(iso).toLocaleTimeString("en-AU", {
@@ -27,7 +24,7 @@ function dateKey(iso: string): string {
 function typeClass(type: string): string {
   const t = type.toLowerCase();
   if (/fire|chimney|grass|bush|structure|blaze/.test(t)) return "fire";
-  if (/mva|accident|rescue|collision/.test(t)) return "rescue";
+  if (/mva|accident|rescue|collision|rcr/.test(t)) return "rescue";
   if (/hazmat|chemical|spill|gas/.test(t)) return "hazmat";
   if (/medical|patient|cardiac/.test(t)) return "medical";
   if (/storm|flood|tree|wire/.test(t)) return "storm";
@@ -35,12 +32,6 @@ function typeClass(type: string): string {
   return "default";
 }
 
-function statusLetter(iso: string): "I" | "A" | "C" {
-  const m = minutesAgo(iso);
-  if (m < 30) return "I";
-  if (m < 120) return "A";
-  return "C";
-}
 
 function UnitBadges({ unit }: { unit: string }) {
   if (!unit) return <span className="dim">—</span>;
@@ -70,38 +61,80 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
     return () => clearInterval(t);
   }, []);
 
+  // Refresh from the API (used both by Realtime callbacks and the fallback poll).
+  async function refresh() {
+    try {
+      const res = await fetch("/api/incidents", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.incidents)) setIncidents(data.incidents);
+      }
+    } catch { /* keep last board */ }
+  }
+
   useEffect(() => {
-    const t = setInterval(async () => {
-      try {
-        const res = await fetch("/api/incidents", { cache: "no-store" });
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.incidents)) setIncidents(data.incidents);
-        }
-      } catch { /* keep last board */ }
-    }, 5000);
-    return () => clearInterval(t);
+    // Supabase Realtime — instant push on any INSERT/UPDATE/DELETE.
+    const channel = getBrowserClient()
+      .channel("incidents-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "incidents" },
+        () => { refresh(); },
+      )
+      .subscribe();
+
+    // Fallback heartbeat poll every 30s in case the Realtime socket drops.
+    const t = setInterval(refresh, 30_000);
+
+    return () => {
+      getBrowserClient().removeChannel(channel);
+      clearInterval(t);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return incidents;
-    return incidents.filter((i) =>
+    let result = incidents.filter((i) => i.type || i.location || i.incidentNo);
+    if (q) result = result.filter((i) =>
       `${i.incidentNo} ${i.type} ${i.unit} ${i.location} ${i.raw}`
         .toLowerCase()
         .includes(q)
     );
+    return result;
   }, [incidents, search]);
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, Incident[]>();
+  // Merge rows that share the same incident number into one display entry.
+  const merged = useMemo(() => {
+    const map = new Map<string, { inc: Incident; units: string[] }>();
     for (const i of filtered) {
-      const d = dateKey(i.receivedAt);
+      const key = i.incidentNo || i.id;
+      if (!map.has(key)) map.set(key, { inc: i, units: [] });
+      const entry = map.get(key)!;
+      const tokens = i.unit.trim().split(/[\s,/]+/).filter(t => /^[A-Z0-9]{2,}$/.test(t));
+      const unitTokens = tokens.length > 0 ? tokens : (i.unit.trim() ? [i.unit.trim().split(/\s+/)[0]] : []);
+      for (const u of unitTokens) {
+        if (u && !entry.units.includes(u)) entry.units.push(u);
+      }
+      if (i.receivedAt < entry.inc.receivedAt) entry.inc = { ...entry.inc, receivedAt: i.receivedAt };
+    }
+    return [...map.values()];
+  }, [filtered]);
+
+  const totalMerged = useMemo(() => {
+    const keys = new Set(incidents.map(i => i.incidentNo || i.id));
+    return keys.size;
+  }, [incidents]);
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, typeof merged>();
+    for (const m of merged) {
+      const d = dateKey(m.inc.receivedAt);
       if (!map.has(d)) map.set(d, []);
-      map.get(d)!.push(i);
+      map.get(d)!.push(m);
     }
     return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-  }, [filtered]);
+  }, [merged]);
 
   return (
     <div className="app">
@@ -133,9 +166,9 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
 
       {/* count bar */}
       <div className="pagebar">
-        {filtered.length === incidents.length
-          ? `${incidents.length} incidents`
-          : `${filtered.length} of ${incidents.length} incidents`}
+        {merged.length === totalMerged
+          ? `${merged.length} incidents`
+          : `${merged.length} of ${totalMerged} incidents`}
       </div>
 
       {/* table */}
@@ -148,22 +181,21 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
               <th>Address</th>
               <th style={{ width: 160 }}>Type</th>
               <th style={{ width: 52 }}>Repeat</th>
-              <th style={{ width: 130 }}>Call Sign</th>
-              <th style={{ width: 70 }}>Status</th>
+              <th style={{ width: 240 }}>Call Sign</th>
             </tr>
           </thead>
           <tbody>
             {grouped.map(([date, rows]) => (
               <Fragment key={date}>
                 <tr className="date-row">
-                  <td colSpan={7}>{date}</td>
+                  <td colSpan={6}>{date}</td>
                 </tr>
-                {rows.map((i) => {
+                {rows.map(({ inc: i, units }) => {
                   const tc = typeClass(i.type);
-                  const status = statusLetter(i.receivedAt);
                   const { street, locality } = splitAddress(i.location);
+                  const key = i.incidentNo || i.id;
                   return (
-                    <tr key={i.id} className="data-row">
+                    <tr key={key} className="data-row">
                       <td>
                         <span className="inc-link">{i.incidentNo || "—"}</span>
                       </td>
@@ -197,14 +229,13 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
                           ? <span className={`type-tag ${tc}`}>{i.type}</span>
                           : <span className="dim">—</span>}
                       </td>
-                      <td className="repeat-cell">0</td>
+                      <td className="repeat-cell">{units.length > 1 ? units.length : 0}</td>
                       <td>
                         <div className="cs-cell">
-                          <UnitBadges unit={i.unit} />
+                          {units.length > 0
+                            ? units.map(u => <span key={u} className="badge">{u}</span>)
+                            : <span className="dim">—</span>}
                         </div>
-                      </td>
-                      <td>
-                        <span className={`status-tag ${status}`}>{status}</span>
                       </td>
                     </tr>
                   );
@@ -214,7 +245,7 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
           </tbody>
         </table>
 
-        {filtered.length === 0 && (
+        {merged.length === 0 && (
           <div className="empty">
             {search ? `No results for "${search}"` : "No incidents."}
           </div>
@@ -231,7 +262,7 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
 
       <footer className="footer">
         <span>POST to /api/incidents</span>
-        <span>polling every 5s</span>
+        <span>live via Supabase Realtime</span>
       </footer>
     </div>
   );

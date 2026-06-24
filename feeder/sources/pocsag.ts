@@ -1,98 +1,53 @@
 import type { PostFn } from "../poster";
+import { isValidPagerLine } from "../filter";
 
 const BASE_URL = "https://pocsag.net";
-const seen = new Set<string>();
+
+// Shape of a pocsag.net "messagePost" payload (only the fields we use).
+interface PocsagMessage {
+  message?: string;
+  timestamp?: number; // Unix seconds
+  agency?: string;
+  ignore?: number | null;
+}
 
 export async function pollPocsag(post: PostFn): Promise<void> {
-  async function tick() {
-    try {
-      const res = await fetch(`${BASE_URL}/`, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml",
-          "Accept-Language": "en-AU,en;q=0.9",
-          Referer: BASE_URL,
-        },
-      });
-
-      if (res.status === 403) {
-        // Site appears to block headless requests. Logged once then silenced.
-        console.warn("[pocsag] 403 — site may require login or Cloudflare bypass; skipping this source");
-        return;
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const html = await res.text();
-      const lines = extractFromHtml(html);
-      const fresh = lines.filter((l) => !seen.has(l));
-      fresh.forEach((l) => seen.add(l));
-      if (seen.size > 2000) {
-        const oldest = [...seen].slice(0, 500);
-        oldest.forEach((k) => seen.delete(k));
-      }
-      if (fresh.length) await post(fresh, "pocsag");
-    } catch (err) {
-      console.error("[pocsag]", err instanceof Error ? err.message : err);
-    }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let io: any;
+  try {
+    io = (await import("socket.io-client")).default ?? (await import("socket.io-client"));
+  } catch {
+    console.error("[pocsag] socket.io-client not installed — run: npm install socket.io-client@2");
+    return;
   }
 
-  tick();
-  setInterval(tick, 120_000);
-}
+  const socket = io(BASE_URL, {
+    transports: ["websocket"],
+    reconnection: true,
+    reconnectionDelay: 5000,
+    reconnectionDelayMax: 30_000,
+  });
 
-function extractFromHtml(html: string): string[] {
-  // Try __NEXT_DATA__ first.
-  const ndMatch = html.match(
-    /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/,
-  );
-  if (ndMatch) {
-    try {
-      const nd = JSON.parse(ndMatch[1]);
-      const messages: unknown[] =
-        nd?.props?.pageProps?.messages ??
-        nd?.props?.pageProps?.pagerMessages ??
-        [];
-      if (Array.isArray(messages) && messages.length > 0) {
-        return messages
-          .map((m: unknown) => {
-            if (typeof m !== "object" || !m) return null;
-            const obj = m as Record<string, unknown>;
-            return (
-              (obj.message as string | undefined) ??
-              (obj.text as string | undefined) ??
-              null
-            );
-          })
-          .filter((l): l is string => !!l && l.length > 4);
-      }
-    } catch {
-      // fall through
-    }
-  }
+  socket.on("connect", () => console.log("[pocsag] connected via Socket.IO"));
+  socket.on("disconnect", (reason: string) => console.warn("[pocsag] disconnected:", reason));
+  socket.on("connect_error", (err: Error) => console.warn("[pocsag] connect error:", err.message));
 
-  // Fallback: generic table parsing — message tends to be the last column.
-  const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
-  const lines: string[] = [];
-  for (const row of rows) {
-    const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(
-      (c) => stripTags(c[1]).trim(),
+  // Each live page arrives as a "messagePost" event carrying one message object.
+  socket.on("messagePost", (msg: PocsagMessage) => {
+    if (!msg || typeof msg.message !== "string") return;
+    if (msg.ignore) return;
+    // Honour the project-wide rule: SES traffic is ignored entirely.
+    if (/^SES$/i.test(msg.agency ?? "")) return;
+
+    const raw = msg.message.trim();
+    if (!isValidPagerLine(raw)) return;
+
+    const receivedAt = msg.timestamp
+      ? new Date(msg.timestamp * 1000).toISOString()
+      : undefined;
+
+    post([{ raw, receivedAt }], "pocsag").catch((err) =>
+      console.error("[pocsag]", err instanceof Error ? err.message : err),
     );
-    // Heuristic: pick the longest cell in each row — usually the message.
-    const longest = cells.reduce(
-      (best, c) => (c.length > best.length ? c : best),
-      "",
-    );
-    if (longest.length > 10) lines.push(longest);
-  }
-  return lines;
-}
-
-function stripTags(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+  });
 }

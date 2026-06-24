@@ -230,10 +230,10 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 }
 
 /* call sign */
-.cs-cell { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.cs-cell { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 .badge {
   display: inline-block;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 4px;
   background: var(--badge-bg);
   border: 1px solid var(--badge-border);

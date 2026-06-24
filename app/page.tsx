@@ -3,7 +3,7 @@ import PagerBoard from "@/components/PagerBoard";
 
 export const dynamic = "force-dynamic";
 
-export default function Page() {
-  const initial = listIncidents();
+export default async function Page() {
+  const initial = await listIncidents();
   return <PagerBoard initial={initial} />;
 }

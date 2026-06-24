@@ -4,8 +4,9 @@ import { listIncidents, addRawMessages, clearStore } from "@/lib/store";
 export const dynamic = "force-dynamic";
 
 // GET /api/incidents  -> current board, newest first.
-export function GET() {
-  return NextResponse.json({ incidents: listIncidents() });
+export async function GET() {
+  const incidents = await listIncidents();
+  return NextResponse.json({ incidents });
 }
 
 // POST /api/incidents -> ingest raw pager line(s).
@@ -15,7 +16,7 @@ export function GET() {
 //   plain text body (one line per row)
 //
 // Example:
-//   curl -X POST http://localhost:3000/api/incidents \
+//   curl -X POST https://pager-board.vercel.app/api/incidents \
 //     -H "Content-Type: application/json" \
 //     -d '{"message":"2 STSUTTO - 26-118999 - Test fire - FIRECALL - 1 TEST ST,SUTTON,YASS VALLEY (NSW),2620 - [149.25,-35.15]"}'
 export async function POST(req: Request) {
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Could not read request body" }, { status: 400 });
   }
 
-  const added = addRawMessages(lines);
+  const added = await addRawMessages(lines);
   if (added.length === 0) {
     return NextResponse.json(
       { error: "No valid pager lines found in request" },
@@ -46,8 +47,8 @@ export async function POST(req: Request) {
   return NextResponse.json({ added }, { status: 201 });
 }
 
-// DELETE /api/incidents -> wipe the board (does not reseed sample data).
-export function DELETE() {
-  clearStore();
+// DELETE /api/incidents -> wipe the board.
+export async function DELETE() {
+  await clearStore();
   return NextResponse.json({ cleared: true });
 }

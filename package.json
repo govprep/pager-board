@@ -12,9 +12,11 @@
     "seed:live": "tsx scripts/seed-live.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "next": "^16.2.9",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "socket.io-client": "^2.5.0"
   },
   "devDependencies": {
     "@types/node": "22.15.21",

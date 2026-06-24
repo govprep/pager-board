@@ -11,15 +11,29 @@ import type { Incident, Coords } from "./types";
 //       2 STSUTTO - 26-118273 - Chimney fire - FIRECALL - 10 NORTH ST,SUTTON,YASS VALLEY (NSW),2620 - [149.255855,-35.158894]
 
 const COORDS_RE = /\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]/;
+// Bare "lng,lat" with no brackets — both numbers must have decimal points to
+// avoid matching postcodes or street numbers.
+const BARE_COORDS_RE = /^-?\d+\.\d+,-?\d+\.\d+$/;
 // An uppercase token immediately followed by a colon = a key.
 const KEY_RE = /\b([A-Z][A-Z0-9]+)\s*:\s*/g;
 
 function parseCoords(line: string): Coords | null {
   const m = line.match(COORDS_RE);
-  if (!m) return null;
-  const lng = Number(m[1]);
-  const lat = Number(m[2]);
-  return Number.isNaN(lng) || Number.isNaN(lat) ? null : { lng, lat };
+  if (m) {
+    const lng = Number(m[1]);
+    const lat = Number(m[2]);
+    return Number.isNaN(lng) || Number.isNaN(lat) ? null : { lng, lat };
+  }
+  // Handle bare "lng,lat" appended without brackets.
+  const bm = line.match(/(-?\d+\.\d+),(-?\d+\.\d+)\s*$/);
+  if (bm) {
+    const a = Number(bm[1]);
+    const b = Number(bm[2]);
+    if (!Number.isNaN(a) && !Number.isNaN(b) && Math.abs(b) <= 90 && Math.abs(a) <= 180) {
+      return { lng: a, lat: b };
+    }
+  }
+  return null;
 }
 
 function parseKeyValue(line: string, receivedAt: string): Incident {
@@ -33,15 +47,53 @@ function parseKeyValue(line: string, receivedAt: string): Incident {
     fields[key] = line.slice(start, end).trim();
   }
 
-  const type = fields.TYPE ?? "";
   const unit =
     fields.TURNOUT ?? fields.UNIT ?? fields.STN ?? fields.STATION ?? "";
   const incRaw = fields.INC ?? fields.INCIDENT ?? "";
+
+  // SES detection: unit is "SES" or an SES callsign (SE + 1+ chars),
+  // OR the INC field itself starts with an SES callsign + call type.
+  const isSesUnit = /^SE[A-Z0-9]+/i.test(unit);
+  const isSesInc = /^SE[A-Z0-9]{2,}\s+[A-Z]{2,}/i.test(incRaw);
+
+  if (isSesUnit || isSesInc) {
+    let sesUnit = unit;
+    let sesType: string;
+    let sesLocation: string;
+
+    if (isSesInc) {
+      // INC has "SEZWCB RCR description…" — extract type from first two tokens.
+      const tokens = incRaw.split(/\s+/);
+      sesUnit = tokens[0];
+      sesType = `${tokens[0]} ${tokens[1] ?? ""}`.trim();
+      sesLocation = incRaw.replace(/^SE\S+\s+\S+\s+(?:at\s+)?/i, "").trim();
+    } else {
+      // INC is a free-form description — use the callsign as the type identifier.
+      sesType = unit;
+      sesLocation = incRaw.replace(/\s+\d{2}\/\d{2}\s+\d{2}:\d{2}(:\d{2})?:?\s*$/i, "").trim();
+    }
+
+    return {
+      id: `${sesUnit}-${receivedAt}`,
+      incidentNo: "",
+      type: sesType,
+      unit: sesUnit,
+      location: sesLocation,
+      coords: parseCoords(line),
+      receivedAt,
+      fields,
+      raw: line,
+    };
+  }
+
+  const type = fields.TYPE ?? "";
   const incidentNo = incRaw.split("-")[0]?.trim() || incRaw;
   const location = fields.LOC ?? fields.LOCATION ?? fields.ADDR ?? "";
 
   return {
-    id: incidentNo || `${unit || "INC"}-${receivedAt}`,
+    id: incidentNo
+      ? unit ? `${incidentNo}-${unit}` : incidentNo
+      : `${unit || "INC"}-${receivedAt}`,
     incidentNo,
     type,
     unit,
@@ -61,9 +113,14 @@ function parsePositional(line: string, receivedAt: string): Incident {
   const callClass = parts[3] ?? "";
 
   const coords = parseCoords(line);
-  const lastIsCoords = COORDS_RE.test(parts[parts.length - 1] ?? "");
+  const lastPart = parts[parts.length - 1] ?? "";
+  const lastIsCoords = COORDS_RE.test(lastPart) || BARE_COORDS_RE.test(lastPart);
   const addrEnd = lastIsCoords ? parts.length - 1 : parts.length;
-  const location = parts.slice(4, addrEnd).join(" - ");
+  // parts[3] is a callClass (e.g. "FIRECALL") when it has no comma and is all-caps.
+  // If it contains a comma or lowercase it's the address itself (no callClass in this message).
+  const p3 = parts[3] ?? "";
+  const addrStart = p3.includes(",") || /[a-z]/.test(p3) ? 3 : 4;
+  const location = parts.slice(addrStart, addrEnd).join(" - ");
 
   // Header is "{level} {station}" — keep the station as the unit.
   // Fall back to the first all-caps alphanumeric token (station code pattern)
@@ -77,7 +134,9 @@ function parsePositional(line: string, receivedAt: string): Incident {
   if (callClass) fields.CLASS = callClass;
 
   return {
-    id: incidentNo || `${unit}-${receivedAt}`,
+    id: incidentNo
+      ? unit ? `${incidentNo}-${unit}` : incidentNo
+      : `${unit}-${receivedAt}`,
     incidentNo,
     type: type || callClass,
     unit,
@@ -89,6 +148,30 @@ function parsePositional(line: string, receivedAt: string): Incident {
   };
 }
 
+// SES callsigns start with SE followed by ≥2 alphanumeric chars, then a call-type word.
+// e.g. "SEZWCB RCR MOTOR VEHICLE ACCIDENT AT YASS VALLEY WAY"
+function isSesLine(line: string): boolean {
+  return /^SE[A-Z0-9]+\s+[A-Z]{2,}/i.test(line) && !line.includes(" - ");
+}
+
+function parseSes(line: string, receivedAt: string): Incident {
+  const tokens = line.trim().split(/\s+/);
+  const unit = tokens[0] ?? "";
+  const callType = tokens[1] ?? "";
+  const location = tokens.slice(2).join(" ");
+  return {
+    id: `${unit}-${receivedAt}`,
+    incidentNo: "",
+    type: `${unit} ${callType}`.trim(),
+    unit,
+    location,
+    coords: parseCoords(line),
+    receivedAt,
+    fields: {},
+    raw: line,
+  };
+}
+
 /** Parse one raw pager line. Returns null only for empty input. */
 export function parsePagerMessage(
   raw: string,
@@ -96,10 +179,9 @@ export function parsePagerMessage(
 ): Incident | null {
   const line = (raw ?? "").trim();
   if (!line) return null;
-  const looksKeyValue = /\b[A-Z][A-Z0-9]+\s*:/.test(line);
-  return looksKeyValue
-    ? parseKeyValue(line, receivedAt)
-    : parsePositional(line, receivedAt);
+  if (/\b[A-Z][A-Z0-9]+\s*:/.test(line)) return parseKeyValue(line, receivedAt);
+  if (isSesLine(line)) return parseSes(line, receivedAt);
+  return parsePositional(line, receivedAt);
 }
 
 /** Parse many lines (a pasted dump or a batch from the feed). */

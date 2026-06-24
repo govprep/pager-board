@@ -1,4 +1,4 @@
-import type { PostFn } from "../poster";
+import type { PostFn, PagerLine } from "../poster";
 import { isValidPagerLine } from "../filter";
 
 function extractPagerLine(raw: string): string | null {
@@ -45,11 +45,28 @@ export async function pollTelegram(post: PostFn): Promise<void> {
     return;
   }
 
-  // Initialise cursor to the latest message so we only post new ones going forward.
+  // Seed the cursor and post the recent valid messages to populate the board,
+  // matching pagermon/rfspager. Without this, telegram stays blank on startup
+  // and only forwards pages that arrive after the feeder boots.
   let lastMsgId = 0;
   try {
-    const seed = await client.getMessages(group, { limit: 1 });
-    if (seed.length) lastMsgId = seed[0].id;
+    const seed = await client.getMessages(group, { limit: 50 });
+    if (seed.length) lastMsgId = Math.max(...seed.map((m) => m.id));
+
+    const lines: PagerLine[] = [...seed]
+      .reverse() // oldest-first so ingest order is chronological
+      .flatMap((m) => {
+        const raw = extractPagerLine((m.message as string | undefined) ?? "");
+        if (!raw) return [];
+        const receivedAt = m.date
+          ? new Date((m.date as number) * 1000).toISOString()
+          : undefined;
+        return [{ raw, receivedAt }];
+      })
+      .slice(-30); // newest 30 valid messages
+
+    if (lines.length) await post(lines, "telegram");
+    console.log(`[telegram] cursor seeded at msg ${lastMsgId}, posted ${lines.length} recent message(s)`);
   } catch (err) {
     console.error("[telegram] failed to seed cursor:", err instanceof Error ? err.message : err);
   }
@@ -68,10 +85,16 @@ export async function pollTelegram(post: PostFn): Promise<void> {
       if (maxId > lastMsgId) lastMsgId = maxId;
 
       // Process oldest-first so the board ingests in chronological order.
-      const lines = [...msgs]
+      const lines: PagerLine[] = [...msgs]
         .reverse()
-        .map((m) => extractPagerLine((m.message as string | undefined) ?? ""))
-        .filter((l): l is string => l !== null);
+        .flatMap((m) => {
+          const raw = extractPagerLine((m.message as string | undefined) ?? "");
+          if (!raw) return [];
+          const receivedAt = m.date
+            ? new Date((m.date as number) * 1000).toISOString()
+            : undefined;
+          return [{ raw, receivedAt }];
+        });
 
       await post(lines, "telegram");
     } catch (err) {

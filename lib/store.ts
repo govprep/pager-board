@@ -1,74 +1,87 @@
 import type { Incident } from "./types";
 import { parsePagerMessage } from "./parser";
-import { SAMPLE_PAGER_LINES, sampleReceivedAt } from "./sample-data";
+import { supabase } from "./supabase";
 
 // ---------------------------------------------------------------------------
-// Data source seam.
-//
-// Today this is a process-memory store seeded with sample data. It is the ONE
-// place to swap in Supabase later: implement the same four functions against a
-// `incidents` table (see lib/supabase.ts and README) and nothing else changes —
-// the API routes and UI only ever call listIncidents() / addRawMessages().
+// Supabase-backed store.  All functions are async.
+// The `incidents` table schema is in supabase/schema.sql.
 // ---------------------------------------------------------------------------
 
-declare global {
-  // Persist across HMR / route invocations in dev.
-  // eslint-disable-next-line no-var
-  var __pagerStore: Map<string, Incident> | undefined;
-  // eslint-disable-next-line no-var
-  var __pagerStoreSeeded: boolean | undefined;
+// Map DB row (snake_case) → Incident (camelCase)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toIncident(row: any): Incident {
+  return {
+    id: row.id,
+    incidentNo: row.incident_no,
+    type: row.type,
+    unit: row.unit,
+    location: row.location,
+    coords: row.coords ?? null,
+    receivedAt: row.received_at,
+    fields: row.fields ?? {},
+    raw: row.raw,
+  };
 }
 
-function seed(): Map<string, Incident> {
-  const map = new Map<string, Incident>();
-  SAMPLE_PAGER_LINES.forEach((line, i) => {
-    const inc = parsePagerMessage(line, sampleReceivedAt(i, SAMPLE_PAGER_LINES.length));
-    if (inc) map.set(inc.id, inc);
-  });
-  return map;
+/** Most recent incidents, newest first. */
+export async function listIncidents(limit = 30): Promise<Incident[]> {
+  const { data, error } = await supabase
+    .from("incidents")
+    .select("*")
+    .order("received_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(toIncident);
 }
 
-function store(): Map<string, Incident> {
-  if (!globalThis.__pagerStoreSeeded) {
-    globalThis.__pagerStore = seed();
-    globalThis.__pagerStoreSeeded = true;
-  }
-  return globalThis.__pagerStore!;
-}
-
-/** Wipe all incidents. The store stays empty (does not re-seed with sample data). */
-export function clearStore(): void {
-  globalThis.__pagerStore = new Map();
-  globalThis.__pagerStoreSeeded = true;
-}
-
-/** All incidents, newest first. */
-export function listIncidents(): Incident[] {
-  return [...store().values()].sort(
-    (a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt),
-  );
-}
-
-export function getIncident(id: string): Incident | undefined {
-  return store().get(id);
+export async function getIncident(id: string): Promise<Incident | undefined> {
+  const { data, error } = await supabase
+    .from("incidents")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return undefined;
+  return toIncident(data);
 }
 
 /**
  * Ingest one or more raw pager lines. Returns the parsed incidents that were
- * added/updated. This is what a real pager feed would POST to.
+ * upserted. Duplicate incident IDs are updated in place.
  */
-export function addRawMessages(input: string | string[]): Incident[] {
+export async function addRawMessages(input: string | string[]): Promise<Incident[]> {
   const lines = Array.isArray(input) ? input : [input];
-  const added: Incident[] = [];
-  const s = store();
+  const parsed: Incident[] = [];
   for (const line of lines) {
     const inc = parsePagerMessage(line);
-    if (inc) {
-      const existing = s.get(inc.id);
-      if (existing) inc.receivedAt = existing.receivedAt;
-      s.set(inc.id, inc);
-      added.push(inc);
-    }
+    if (inc) parsed.push(inc);
   }
-  return added;
+  if (parsed.length === 0) return [];
+
+  const rows = parsed.map((inc) => ({
+    id: inc.id,
+    incident_no: inc.incidentNo,
+    type: inc.type,
+    unit: inc.unit,
+    location: inc.location,
+    coords: inc.coords,
+    fields: inc.fields,
+    received_at: inc.receivedAt,
+    raw: inc.raw,
+  }));
+
+  const { data, error } = await supabase
+    .from("incidents")
+    .upsert(rows, { onConflict: "id" })
+    .select();
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(toIncident);
+}
+
+/** Wipe all incidents. */
+export async function clearStore(): Promise<void> {
+  const { error } = await supabase
+    .from("incidents")
+    .delete()
+    .neq("id", "");
+  if (error) throw new Error(error.message);
 }

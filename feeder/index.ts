@@ -34,18 +34,19 @@ function loadEnvLocal() {
 }
 loadEnvLocal();
 
-import { makePoster } from "./poster";
+import { makeWriter } from "./poster";
 import { pollPagerMon } from "./sources/pagermon";
 import { pollRfsPager } from "./sources/rfspager";
 import { pollPocsag } from "./sources/pocsag";
 import { pollTelegram } from "./sources/telegram";
 
-const BOARD_URL = process.env.BOARD_URL ?? "http://localhost:3000";
-const post = makePoster(BOARD_URL);
+(async () => {
+  const { post } = makeWriter();
 
-console.log(`Pager feeder starting — board: ${BOARD_URL}`);
+  console.log("Pager feeder starting — writing direct to Supabase");
 
-pollPagerMon(post);
-pollRfsPager(post);
-pollPocsag(post);
-pollTelegram(post);
+  pollPagerMon(post);
+  pollRfsPager(post);
+  pollPocsag(post);
+  pollTelegram(post);
+})();

@@ -1,4 +1,4 @@
-import type { PostFn } from "../poster";
+import type { PostFn, PagerLine } from "../poster";
 import { isValidPagerLine } from "../filter";
 
 interface PagerMonMessage {
@@ -69,13 +69,22 @@ export async function pollPagerMon(post: PostFn): Promise<void> {
   }
   console.log("[pagermon] logged in");
 
-  // Seed the cursor to the latest message so a fresh start (or restart after
-  // a board clear) doesn't re-flood the board with old messages.
+  // Seed the cursor and post the 30 most recent valid messages to populate the board.
   let lastId = 0;
   try {
     const seed = await getMessages(base, 0);
     if (seed.length) lastId = Math.max(...seed.map((m) => m.id ?? 0));
-    console.log(`[pagermon] cursor seeded at id ${lastId}`);
+
+    const toPost: PagerLine[] = seed
+      .filter(isUsable)
+      .slice(0, 30)
+      .map((m) => ({
+        raw: m.message.trim(),
+        receivedAt: m.timestamp ? new Date(m.timestamp * 1000).toISOString() : undefined,
+      }));
+    if (toPost.length) await post(toPost, "pagermon");
+
+    console.log(`[pagermon] cursor seeded at id ${lastId}, posted ${toPost.length} recent message(s)`);
   } catch (err) {
     console.error("[pagermon] failed to seed cursor:", err instanceof Error ? err.message : err);
   }
@@ -95,11 +104,16 @@ export async function pollPagerMon(post: PostFn): Promise<void> {
       if (!messages.length) return;
 
       const maxId = Math.max(...messages.map((m) => m.id ?? 0));
-      if (maxId > 0) lastId = maxId;
+      if (maxId >= lastId) lastId = maxId + 1;
 
-      const lines = messages
+      const lines: PagerLine[] = messages
         .filter(isUsable)
-        .map((m) => m.message.trim());
+        .map((m) => ({
+          raw: m.message.trim(),
+          receivedAt: m.timestamp
+            ? new Date(m.timestamp * 1000).toISOString()
+            : undefined,
+        }));
 
       await post(lines, "pagermon");
     } catch (err) {
