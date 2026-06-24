@@ -180,7 +180,6 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
               <th style={{ width: 60 }}>Time</th>
               <th>Address</th>
               <th style={{ width: 160 }}>Type</th>
-              <th style={{ width: 52 }}>Repeat</th>
               <th style={{ width: 240 }}>Call Sign</th>
             </tr>
           </thead>
@@ -188,7 +187,7 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
             {grouped.map(([date, rows]) => (
               <Fragment key={date}>
                 <tr className="date-row">
-                  <td colSpan={6}>{date}</td>
+                  <td colSpan={5}>{date}</td>
                 </tr>
                 {rows.map(({ inc: i, units }) => {
                   const tc = typeClass(i.type);
@@ -229,7 +228,6 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
                           ? <span className={`type-tag ${tc}`}>{i.type}</span>
                           : <span className="dim">—</span>}
                       </td>
-                      <td className="repeat-cell">{units.length > 1 ? units.length : 0}</td>
                       <td>
                         <div className="cs-cell">
                           {units.length > 0
@@ -255,7 +253,7 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
       <div className="quitline">
         <div className="quitline-label">Warning</div>
         <div className="quitline-body">
-          <p>Think about who you&rsquo;re leaving at home.</p>
+          <p>SIRENS CAUSE HEARING DAMAGE.</p>
           <p>Call the <span>Belter Quitline</span> on <span>1800 BELTER</span></p>
         </div>
       </div>
