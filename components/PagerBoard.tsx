@@ -141,7 +141,7 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
       {/* header */}
       <header className="topbar">
         <div className="brand">
-          <img src="/logo.jpg" alt="Belter Watch" />
+          <img src="/logo.jpg" alt="BelterHub" />
         </div>
 
         <div className="topbar-spacer" />
@@ -250,18 +250,6 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
         )}
       </div>
 
-      <div className="quitline">
-        <div className="quitline-label">Warning</div>
-        <div className="quitline-body">
-          <p>SIRENS CAUSE HEARING DAMAGE.</p>
-          <p>Call the <span>Belter Quitline</span> on <span>1800 BELTER</span></p>
-        </div>
-      </div>
-
-      <footer className="footer">
-        <span>POST to /api/incidents</span>
-        <span>live via Supabase Realtime</span>
-      </footer>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Belter Watch",
+  title: "BelterHub",
   description: "Live volunteer brigade pager incident board",
 };
 
