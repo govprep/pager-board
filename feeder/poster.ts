@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parsePagerMessage, hasIncidentNumber } from "../lib/parser";
 import type { Incident } from "../lib/types";
 import { postPending } from "./slack";
+import { pushPending } from "./push";
 
 export interface PagerLine {
   raw: string;
@@ -87,10 +88,13 @@ export function makeWriter(): Writer {
     const count = data?.length ?? 0;
     if (count) console.log(`[${source}] +${count} incident(s)`);
 
-    // Mirror to Slack (no-op unless SLACK_BOT_TOKEN is set). Self-filters to
-    // pages not yet posted, so re-upserts of unchanged rows cost nothing.
+    // Mirror to Slack (no-op unless SLACK_BOT_TOKEN is set) and fan out phone
+    // push (no-op unless VAPID keys are set). Both self-filter to pages not yet
+    // sent, so re-upserts of unchanged rows cost nothing.
     if (count) {
-      await postPending(db, data!.map((r) => r.id));
+      const upsertedIds = data!.map((r) => r.id);
+      await postPending(db, upsertedIds);
+      await pushPending(db, upsertedIds);
     }
   }
 

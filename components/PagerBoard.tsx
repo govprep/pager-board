@@ -5,6 +5,7 @@ import type { Incident } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
 import { satelliteMapUrl } from "@/lib/maps";
+import EnableAlerts from "@/components/EnableAlerts";
 
 function fmt(iso: string, secs = false) {
   return new Date(iso).toLocaleTimeString("en-AU", {
@@ -248,6 +249,8 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
             <button className="search-clear" onClick={() => setSearch("")}>×</button>
           )}
         </label>
+
+        <EnableAlerts />
 
         <div className="clock">{now ? fmt(now.toISOString(), true) : "--:--:--"}</div>
       </header>

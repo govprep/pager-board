@@ -1,0 +1,18 @@
+{
+  "name": "BelterHub",
+  "short_name": "BelterHub",
+  "description": "Live volunteer brigade pager incident board",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0e14",
+  "theme_color": "#0b0e14",
+  "icons": [
+    {
+      "src": "/logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}

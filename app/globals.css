@@ -135,6 +135,29 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
   align-items: center;
 }
 
+/* ── enable-alerts (PWA push) ────────────────────────── */
+.alerts-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  flex: none;
+}
+.alerts-btn:hover { border-color: var(--text-3); }
+
+.alerts-on,
+.alerts-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+  flex: none;
+}
+.alerts-on { color: var(--text-2); }
+
 
 /* ── table ───────────────────────────────────────────── */
 .list-wrap { flex: 1; overflow-y: auto; }

@@ -45,3 +45,23 @@ create table if not exists public.incident_threads (
   thread_ts   text        not null,
   created_at  timestamptz not null default now()
 );
+
+-- ── Web push (PWA phone notifications) ───────────────────────────────────────
+-- Marks when a page fired a push notification. NULL = not yet pushed; the
+-- feeder's push step claims rows where this is NULL, sends, then stamps the time.
+-- Same self-filtering pattern as slacked_at so re-upserts never double-notify.
+alter table public.incidents
+  add column if not exists pushed_at timestamptz;
+
+-- One row per browser/device push subscription. Written by the subscribe API
+-- (service role), read by the feeder to know who to notify. Endpoint is the
+-- stable per-subscription URL the push service hands us.
+create table if not exists public.push_subscriptions (
+  endpoint   text        primary key,
+  p256dh     text        not null,
+  auth       text        not null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.push_subscriptions enable row level security;
+-- No anon policies: only the service role (API routes + feeder) touches this.
