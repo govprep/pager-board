@@ -12,7 +12,7 @@ const MODEL = "claude-haiku-4-5-20251001";
 
 // Well-known fire-service abbreviations. Keys are uppercased, no punctuation.
 const DICTIONARY: Record<string, string> = {
-  AFA: "Automated fire alarm",
+  AFA: "Automatic fire alarm",
   ALARM: "Fire alarm",
   RCR: "Rescue / road crash",
   MVA: "Motor vehicle accident",

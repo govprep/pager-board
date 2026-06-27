@@ -65,3 +65,20 @@ create table if not exists public.push_subscriptions (
 
 alter table public.push_subscriptions enable row level security;
 -- No anon policies: only the service role (API routes + feeder) touches this.
+
+-- One row per (incident, device) the user has chosen to follow from the incident
+-- modal. The feeder reads this to know who to notify when a new unit is added to
+-- an already-known incident ("CMEASCR1 was added to RINGWOOD RD"). Cascades off
+-- push_subscriptions so pruning a dead endpoint clears its follows too.
+create table if not exists public.incident_subscriptions (
+  incident_no text        not null,
+  endpoint    text        not null references public.push_subscriptions(endpoint) on delete cascade,
+  created_at  timestamptz not null default now(),
+  primary key (incident_no, endpoint)
+);
+
+create index if not exists incident_subscriptions_incident_no_idx
+  on public.incident_subscriptions (incident_no);
+
+alter table public.incident_subscriptions enable row level security;
+-- No anon policies: only the service role (API routes + feeder) touches this.

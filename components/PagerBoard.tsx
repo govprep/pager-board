@@ -6,6 +6,7 @@ import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
 import { satelliteMapUrl } from "@/lib/maps";
 import EnableAlerts from "@/components/EnableAlerts";
+import { pushSupported, isFollowing, followIncident, unfollowIncident } from "@/lib/push-client";
 
 function fmt(iso: string, secs = false) {
   return new Date(iso).toLocaleTimeString("en-AU", {
@@ -70,6 +71,58 @@ function splitAddress(loc: string): { street: string; locality: string } {
 
 type Entry = { inc: Incident; units: string[] };
 
+// Per-incident "Follow updates" toggle. Subscribing enables device push (if it
+// isn't already) and registers this device to be notified when a unit is added
+// to this incident. Hidden entirely when push isn't available.
+type FollowState = "loading" | "off" | "on" | "busy" | "unsupported";
+
+function FollowButton({ incidentNo }: { incidentNo: string }) {
+  const [state, setState] = useState<FollowState>("loading");
+
+  useEffect(() => {
+    let active = true;
+    if (!pushSupported()) {
+      setState("unsupported");
+      return;
+    }
+    isFollowing(incidentNo).then((f) => {
+      if (active) setState(f ? "on" : "off");
+    });
+    return () => { active = false; };
+  }, [incidentNo]);
+
+  if (state === "unsupported") return null;
+
+  async function toggle() {
+    if (state === "on") {
+      setState("busy");
+      const ok = await unfollowIncident(incidentNo);
+      setState(ok ? "off" : "on");
+    } else if (state === "off") {
+      setState("busy");
+      const ok = await followIncident(incidentNo);
+      setState(ok ? "on" : "off");
+    }
+  }
+
+  const busy = state === "busy" || state === "loading";
+  const label =
+    state === "on" ? "🔔 Following" :
+    busy ? "…" :
+    "🔔 Follow updates";
+
+  return (
+    <button
+      className={`follow-btn${state === "on" ? " on" : ""}`}
+      onClick={toggle}
+      disabled={busy}
+      title="Get a phone alert when a new unit is added to this incident"
+    >
+      {label}
+    </button>
+  );
+}
+
 function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }) {
   const { inc, units } = entry;
   const sat = satelliteMapUrl(inc.coords);
@@ -86,7 +139,10 @@ function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-head">
           <span className="modal-inc">{inc.incidentNo || "Incident"}</span>
-          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          <div className="modal-head-actions">
+            {inc.incidentNo && <FollowButton incidentNo={inc.incidentNo} />}
+            <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
         </div>
 
         <div className="modal-body">
