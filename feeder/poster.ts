@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { parsePagerMessage } from "../lib/parser";
+import { parsePagerMessage, isFrnswIncident } from "../lib/parser";
 import type { Incident } from "../lib/types";
 import { postPending } from "./slack";
 
@@ -47,7 +47,10 @@ export function makeWriter(): Writer {
         const inc = parsePagerMessage(raw, receivedAt);
         return inc ? { inc, hasTime: receivedAt != null } : null;
       })
-      .filter((p): p is { inc: Incident; hasTime: boolean } => p !== null);
+      // Only FRNSW incidents (FRINC + an incident number) are stored/mirrored —
+      // SES and number-less pages are dropped at ingestion.
+      .filter((p): p is { inc: Incident; hasTime: boolean } =>
+        p !== null && isFrnswIncident(p.inc));
 
     if (!parsed.length) return;
 
