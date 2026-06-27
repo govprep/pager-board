@@ -201,8 +201,14 @@ function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }
   );
 }
 
-export default function PagerBoard({ initial }: { initial: Incident[] }) {
-  const [incidents, setIncidents] = useState<Incident[]>(initial);
+export default function PagerBoard({
+  getToken,
+  onSignOut,
+}: {
+  getToken: () => string | null;
+  onSignOut: () => void;
+}) {
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [search, setSearch] = useState("");
   const [now, setNow] = useState<Date | null>(null);
   const [selected, setSelected] = useState<Entry | null>(null);
@@ -214,9 +220,14 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
   }, []);
 
   // Refresh from the API (used both by Realtime callbacks and the fallback poll).
+  // /api/incidents is members-only, so attach this device's access token.
   async function refresh() {
     try {
-      const res = await fetch("/api/incidents", { cache: "no-store" });
+      const token = getToken();
+      const res = await fetch("/api/incidents", {
+        cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.incidents)) setIncidents(data.incidents);
@@ -225,6 +236,9 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
   }
 
   useEffect(() => {
+    // Load the board now (no server prefetch — the gate renders us empty).
+    refresh();
+
     // Supabase Realtime — instant push on any INSERT/UPDATE/DELETE.
     const channel = getBrowserClient()
       .channel("incidents-live")
@@ -307,6 +321,14 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
         </label>
 
         <EnableAlerts />
+
+        <button
+          className="signout-btn"
+          title="Forget this device — you'll need your invite link again"
+          onClick={onSignOut}
+        >
+          Sign out
+        </button>
 
         <div className="clock">{now ? fmt(now.toISOString(), true) : "--:--:--"}</div>
       </header>

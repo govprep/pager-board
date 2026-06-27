@@ -17,12 +17,19 @@ create table if not exists public.incidents (
 create index if not exists incidents_received_at_idx
   on public.incidents (received_at desc);
 
--- Row-level security: allow anonymous reads, block anonymous writes.
--- Writes come from the service role key (API routes), which bypasses RLS.
+-- Row-level security: the board is members-only (SMS-OTP login), so reads
+-- require a verified Supabase session. Anonymous sockets — including the
+-- browser's Realtime subscription before sign-in — get nothing. Writes come
+-- from the service role key (API routes + feeder), which bypasses RLS.
 alter table public.incidents enable row level security;
 
-create policy "allow_anon_read"
+-- Replaces the old public "allow_anon_read (using true)" policy. If you ran an
+-- earlier schema, drop it first:  drop policy if exists "allow_anon_read" on public.incidents;
+drop policy if exists "allow_anon_read" on public.incidents;
+
+create policy "allow_authenticated_read"
   on public.incidents for select
+  to authenticated
   using (true);
 
 -- Enable Realtime on this table so the browser client gets instant pushes.
@@ -45,6 +52,24 @@ create table if not exists public.incident_threads (
   thread_ts   text        not null,
   created_at  timestamptz not null default now()
 );
+
+-- ── Members / access (per-member invite links) ───────────────────────────────
+-- The board is members-only. Each member gets a unique invite link carrying
+-- their `token`; opening it enrolls that device. The /api/session route trades a
+-- valid (non-revoked) token for a short-lived access JWT. To revoke someone, set
+-- revoked_at — their next session refresh is refused and the device is locked
+-- out within one token lifetime. Only the service role touches this table.
+create table if not exists public.members (
+  id           uuid        primary key default gen_random_uuid(),
+  label        text        not null default '',   -- who the link is for, e.g. "Jane S"
+  token        text        not null unique,        -- the secret in the invite URL
+  created_at   timestamptz not null default now(),
+  last_seen_at timestamptz,
+  revoked_at   timestamptz                         -- non-null = access turned off
+);
+
+alter table public.members enable row level security;
+-- No anon policies: only the service role (API routes) reads/writes this.
 
 -- ── Web push (PWA phone notifications) ───────────────────────────────────────
 -- Marks when a page fired a push notification. NULL = not yet pushed; the

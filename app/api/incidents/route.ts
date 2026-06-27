@@ -1,10 +1,23 @@
 import { NextResponse } from "next/server";
 import { listIncidents, addRawMessages, clearStore } from "@/lib/store";
+import { verifyAccessToken } from "@/lib/access";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/incidents  -> current board, newest first.
-export async function GET() {
+// True when the request carries a valid access token minted by /api/session.
+// The board is members-only, so reads require an enrolled (invited) device.
+async function isAuthed(req: Request): Promise<boolean> {
+  const auth = req.headers.get("authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!token) return false;
+  return (await verifyAccessToken(token)) !== null;
+}
+
+// GET /api/incidents  -> current board, newest first. Members only.
+export async function GET(req: Request) {
+  if (!(await isAuthed(req))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const incidents = await listIncidents();
   return NextResponse.json({ incidents });
 }
@@ -16,7 +29,7 @@ export async function GET() {
 //   plain text body (one line per row)
 //
 // Example:
-//   curl -X POST https://pager-board.vercel.app/api/incidents \
+//   curl -X POST https://belter.cmssweb.com.au/api/incidents \
 //     -H "Content-Type: application/json" \
 //     -d '{"message":"2 STSUTTO - 26-118999 - Test fire - FIRECALL - 1 TEST ST,SUTTON,YASS VALLEY (NSW),2620 - [149.25,-35.15]"}'
 export async function POST(req: Request) {
