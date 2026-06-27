@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parsePagerMessage } from "../lib/parser";
 import type { Incident } from "../lib/types";
+import { postPending } from "./slack";
 
 export interface PagerLine {
   raw: string;
@@ -31,6 +32,9 @@ export function makeWriter(): Writer {
   async function clear() {
     const { error } = await db.from("incidents").delete().neq("id", "");
     if (error) throw new Error(error.message);
+    // Drop thread mappings too, so a re-ingest starts fresh parent messages
+    // instead of replying into now-orphaned Slack threads.
+    await db.from("incident_threads").delete().neq("incident_no", "");
   }
 
   async function write(lines: PagerLine[], source: string) {
@@ -79,6 +83,12 @@ export function makeWriter(): Writer {
 
     const count = data?.length ?? 0;
     if (count) console.log(`[${source}] +${count} incident(s)`);
+
+    // Mirror to Slack (no-op unless SLACK_BOT_TOKEN is set). Self-filters to
+    // pages not yet posted, so re-upserts of unchanged rows cost nothing.
+    if (count) {
+      await postPending(db, data!.map((r) => r.id));
+    }
   }
 
   return { post: write, clear };

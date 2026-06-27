@@ -29,3 +29,19 @@ create policy "allow_anon_read"
 -- (In the Supabase dashboard: Table Editor → incidents → Realtime toggle ON)
 -- Or via SQL:
 alter publication supabase_realtime add table public.incidents;
+
+-- ── Slack bot ────────────────────────────────────────────────────────────────
+-- Marks when a page was posted to Slack. NULL = not yet posted; the feeder's
+-- Slack step claims rows where this is NULL, posts them, then stamps the time.
+alter table public.incidents
+  add column if not exists slacked_at timestamptz;
+
+-- One row per real-world incident (keyed by incident number) recording the Slack
+-- thread its pages post into. The first page of a number creates the parent
+-- message and stores its ts here; later pages reply into the same thread.
+create table if not exists public.incident_threads (
+  incident_no text        primary key,
+  channel     text        not null,
+  thread_ts   text        not null,
+  created_at  timestamptz not null default now()
+);
