@@ -1,13 +1,14 @@
 /**
- * Manage board access (per-member invite links).
+ * Manage board access (single-use invite links).
  *
- *   npm run access list                 — show all members + status
- *   npm run access new "Jane S"         — create a member, print their invite link
- *   npm run access revoke <id|label>    — turn off a member's access
- *   npm run access restore <id|label>   — turn it back on
+ *   npm run access new "Jane S"          — create a member, print their one-time link
+ *   npm run access list                  — show all members + status
+ *   npm run access revoke <id|label>     — turn off a member's access
+ *   npm run access restore <id|label>    — turn it back on
  *
- * Reads NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY from .env.local
- * (same config as the app/feeder). BOARD_URL sets the link host (defaults to
+ * Each link enrols exactly one device, then it's spent. Reads
+ * NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY from .env.local (same
+ * config as the app/feeder). BOARD_URL sets the link host (defaults to
  * http://localhost:3000).
  */
 
@@ -48,9 +49,9 @@ function inviteLink(token: string): string {
   return `${boardUrl}/?invite=${token}`;
 }
 
+// Find a member by exact id, else unique case-insensitive label match.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function findMember(needle: string): Promise<any | null> {
-  // Match by exact id first, then by label (case-insensitive).
   const byId = await db.from("members").select("*").eq("id", needle).maybeSingle();
   if (byId.data) return byId.data;
   const byLabel = await db.from("members").select("*").ilike("label", needle).limit(2);
@@ -62,35 +63,37 @@ async function findMember(needle: string): Promise<any | null> {
   return null;
 }
 
+async function create(label: string) {
+  if (!label) {
+    console.error('Give the member a label:  npm run access new "Jane S"');
+    process.exit(1);
+  }
+  const inviteToken = randomBytes(24).toString("base64url");
+  const { data, error } = await db
+    .from("members")
+    .insert({ label, invite_token: inviteToken })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  console.log(`Created ${data.label} (${data.id})`);
+  console.log(`One-time invite link — send it to them, works on the first device only:`);
+  console.log(`  ${inviteLink(inviteToken)}`);
+}
+
 async function list() {
   const { data, error } = await db
     .from("members")
     .select("*")
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
-  if (!data?.length) return console.log("No members yet. Add one:  npm run access new \"Name\"");
+  if (!data?.length) return console.log('No members yet:  npm run access new "Name"');
   for (const m of data) {
-    const status = m.revoked_at ? "REVOKED" : "active";
-    const seen = m.last_seen_at ? new Date(m.last_seen_at).toLocaleString() : "never";
-    console.log(`${m.id}  ${status.padEnd(8)} ${(m.label || "(no label)").padEnd(20)} last seen: ${seen}`);
+    const state = m.revoked_at ? "REVOKED" : m.claimed_at ? "enrolled" : "pending";
+    const detail = m.claimed_at
+      ? `last seen: ${m.last_seen_at ? new Date(m.last_seen_at).toLocaleString() : "—"}`
+      : `link: ${inviteLink(m.invite_token)}`;
+    console.log(`${m.id}  ${state.padEnd(8)} ${(m.label || "(no label)").padEnd(18)} ${detail}`);
   }
-}
-
-async function create(label: string) {
-  if (!label) {
-    console.error('Give the member a label:  npm run access new "Jane S"');
-    process.exit(1);
-  }
-  const token = randomBytes(24).toString("base64url");
-  const { data, error } = await db
-    .from("members")
-    .insert({ label, token })
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  console.log(`Created ${data.label} (${data.id})`);
-  console.log(`Invite link — send this to them, open on their device:`);
-  console.log(`  ${inviteLink(token)}`);
 }
 
 async function setRevoked(needle: string, revoked: boolean) {
@@ -111,12 +114,12 @@ async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const arg = rest.join(" ").trim();
   switch (cmd) {
-    case "list": return list();
     case "new": return create(arg);
+    case "list": return list();
     case "revoke": return setRevoked(arg, true);
     case "restore": return setRevoked(arg, false);
     default:
-      console.log("Usage: npm run access <list | new \"Name\" | revoke <id|label> | restore <id|label>>");
+      console.log('Usage: npm run access <new "Name" | list | revoke <id|label> | restore <id|label>>');
   }
 }
 

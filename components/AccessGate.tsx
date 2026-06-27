@@ -1,23 +1,24 @@
 "use client";
 
-// Gates the whole board behind a per-member invite link.
+// Gates the whole board behind a single-use invite link.
 //
-// Each member gets a unique link, https://board/?invite=<token>. Opening it
-// stores that token in localStorage as the device's durable credential — that's
-// the "never ask again": no login screen ever again on this device. On load (and
-// periodically) the gate exchanges the stored token for a short-lived access
-// token via /api/session, which the board uses for its API calls and Supabase
-// Realtime. Revoke a member in the DB and their next exchange is refused (403),
-// which clears the device and shows the "access removed" screen.
+// Each person gets their own one-time link, https://board/?invite=<token>. The
+// first device to open it redeems it at /api/enroll for a per-device token it
+// stores in localStorage — that's the "never ask again": the device keeps its
+// own durable credential and the link is then spent (no second device can use
+// it). On load (and periodically) the gate exchanges that device token for a
+// short-lived access token via /api/session, used for the board's API calls and
+// Supabase Realtime. Revoke the member and the next exchange is refused (403),
+// clearing the device and showing "access removed".
 
 import { useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import PagerBoard from "@/components/PagerBoard";
 
 const INVITE_PARAM = "invite";
-const STORAGE_KEY = "belterhub.invite";
+const STORAGE_KEY = "belterhub.invite"; // this device's durable token
 const REFRESH_MS = 45 * 60 * 1000; // re-exchange before the 1h token expires
-const RETRY_MS = 10 * 1000;        // quick retry after a transient exchange error
+const RETRY_MS = 10 * 1000;        // quick retry after a transient error
 
 type Phase = "checking" | "no-invite" | "revoked" | "authed";
 
@@ -25,15 +26,35 @@ export default function AccessGate() {
   const [phase, setPhase] = useState<Phase>("checking");
   const accessRef = useRef<string | null>(null);
 
-  // Exchange the durable invite token for a fresh access token.
+  // Redeem a reusable invite link for this device's own durable token.
+  // Returns "ok" | "bad-invite" (disabled/unknown link) | "error" (transient).
+  async function enroll(invite: string): Promise<"ok" | "bad-invite" | "error"> {
+    let res: Response;
+    try {
+      res = await fetch("/api/enroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invite, userAgent: navigator.userAgent }),
+      });
+    } catch {
+      return "error";
+    }
+    if (res.status === 403) return "bad-invite";
+    if (!res.ok) return "error";
+    const { token } = await res.json();
+    localStorage.setItem(STORAGE_KEY, token);
+    return "ok";
+  }
+
+  // Exchange this device's durable token for a fresh access token.
   // Returns "ok" | "revoked" | "error" (error = transient, keep the credential).
-  async function exchange(invite: string): Promise<"ok" | "revoked" | "error"> {
+  async function exchange(token: string): Promise<"ok" | "revoked" | "error"> {
     let res: Response;
     try {
       res = await fetch("/api/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: invite }),
+        body: JSON.stringify({ token }),
       });
     } catch {
       return "error";
@@ -48,32 +69,39 @@ export default function AccessGate() {
   }
 
   useEffect(() => {
-    // An invite link (?invite=…) enrolls this device, then we clean the URL.
+    // Pull the invite token off the link, then clean it from the URL.
     const url = new URL(window.location.href);
-    const fromLink = url.searchParams.get(INVITE_PARAM);
-    if (fromLink) {
-      localStorage.setItem(STORAGE_KEY, fromLink);
+    const inviteFromLink = url.searchParams.get(INVITE_PARAM);
+    if (inviteFromLink) {
       url.searchParams.delete(INVITE_PARAM);
       window.history.replaceState({}, "", url.toString());
     }
 
-    const invite = localStorage.getItem(STORAGE_KEY);
-    if (!invite) return setPhase("no-invite");
-
-    // Self-rescheduling refresh: normal cadence on success, quick retry on a
-    // transient error (so an offline first load recovers in seconds, not 45min),
-    // and stop + lock out on an explicit revoke.
+    // Self-rescheduling: enroll once if needed, then exchange on a normal
+    // cadence, retrying quickly on transient errors and locking out on revoke.
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
     async function keepFresh() {
-      const result = await exchange(invite!);
+      // Step 1: make sure this device has a durable token (enroll if not).
+      if (!localStorage.getItem(STORAGE_KEY)) {
+        if (!inviteFromLink) return setPhase("no-invite");
+        const r = await enroll(inviteFromLink);
+        if (cancelled) return;
+        if (r === "bad-invite") return setPhase("revoked");
+        if (r === "error") {
+          timer = setTimeout(keepFresh, RETRY_MS);
+          return;
+        }
+      }
+
+      // Step 2: exchange the device token for a short-lived access token.
+      const token = localStorage.getItem(STORAGE_KEY)!;
+      const result = await exchange(token);
       if (cancelled) return;
       if (result === "revoked") {
         localStorage.removeItem(STORAGE_KEY);
         return setPhase("revoked");
       }
-      // Render the board once we have a token; on a transient error keep the
-      // credential and retry soon (the board's own poll also recovers).
       if (result === "ok") setPhase("authed");
       timer = setTimeout(keepFresh, result === "ok" ? REFRESH_MS : RETRY_MS);
     }
@@ -104,8 +132,8 @@ export default function AccessGate() {
         </h1>
         <p className="auth-sub">
           {phase === "revoked"
-            ? "This device's access has been turned off. Ask a coordinator for a new invite link."
-            : "BelterHub is members-only. Open the invite link a coordinator sent you on this device to get in."}
+            ? "This device's access has been turned off. Ask an admin for a new invite link."
+            : "BelterHub is members-only. Open the invite link an admin sent you on this device to get in."}
         </p>
       </div>
     </div>

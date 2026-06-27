@@ -53,20 +53,51 @@ create table if not exists public.incident_threads (
   created_at  timestamptz not null default now()
 );
 
--- ── Members / access (per-member invite links) ───────────────────────────────
--- The board is members-only. Each member gets a unique invite link carrying
--- their `token`; opening it enrolls that device. The /api/session route trades a
--- valid (non-revoked) token for a short-lived access JWT. To revoke someone, set
--- revoked_at — their next session refresh is refused and the device is locked
--- out within one token lifetime. Only the service role touches this table.
+-- ── Members / access (single-use invite links) ───────────────────────────────
+-- One row per person, with a lifecycle: pending → enrolled → (revoked).
+--   pending   : created with an invite_token; the link is ?invite=<invite_token>.
+--   enrolled  : a device redeemed the link (/api/enroll) — that single claim sets
+--               claimed_at and mints a per-device device_token (stored in the
+--               browser). The invite_token can never enrol a second device.
+--   revoked   : revoked_at set; the device's next /api/session refresh is refused.
+-- The two tokens are deliberately separate: /api/enroll only accepts invite_token
+-- (once), /api/session only accepts device_token — so a leaked link can't be
+-- replayed into a session, and a claimed link is dead. Service role only.
 create table if not exists public.members (
   id           uuid        primary key default gen_random_uuid(),
   label        text        not null default '',   -- who the link is for, e.g. "Jane S"
-  token        text        not null unique,        -- the secret in the invite URL
+  invite_token text        unique,                 -- one-time link secret (unusable once claimed)
+  device_token text        unique,                 -- per-device secret, null until claimed
+  claimed_at   timestamptz,                         -- when a device redeemed the link
+  user_agent   text,                                -- claiming device, for the admin list
   created_at   timestamptz not null default now(),
   last_seen_at timestamptz,
-  revoked_at   timestamptz                         -- non-null = access turned off
+  revoked_at   timestamptz                          -- non-null = access turned off
 );
+
+-- Migration for an existing members table (earlier schema had a single `token`).
+-- Add the new columns, then backfill so already-enrolled devices keep working:
+-- their stored token becomes the device_token, and the row counts as claimed.
+alter table public.members add column if not exists invite_token text;
+alter table public.members add column if not exists device_token text;
+alter table public.members add column if not exists claimed_at   timestamptz;
+alter table public.members add column if not exists user_agent   text;
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'members' and column_name = 'token'
+  ) then
+    update public.members set
+      invite_token = coalesce(invite_token, token),
+      device_token = coalesce(device_token, token),
+      claimed_at   = coalesce(claimed_at, created_at)
+    where token is not null;
+  end if;
+end $$;
+
+create unique index if not exists members_invite_token_key on public.members (invite_token);
+create unique index if not exists members_device_token_key on public.members (device_token);
 
 alter table public.members enable row level security;
 -- No anon policies: only the service role (API routes) reads/writes this.

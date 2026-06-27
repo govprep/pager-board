@@ -4,11 +4,11 @@ import { mintAccessToken } from "@/lib/access";
 
 export const dynamic = "force-dynamic";
 
-// POST /api/session — exchange a durable invite token (from a member's invite
-// link, kept in the browser's localStorage) for a short-lived access token.
-// Called on every app load and periodically to refresh. A missing, unknown, or
-// revoked invite token gets 403 — that's how access is "policed": revoke the
-// member row and their next refresh is refused, locking the device out.
+// POST /api/session — exchange a device's durable token (minted by /api/enroll,
+// kept in the browser's localStorage) for a short-lived access token. Called on
+// every app load and periodically to refresh. A missing, unknown, or revoked
+// token gets 403 — that's how access is "policed": revoke the device and its
+// next refresh is refused, locking it out within one token lifetime.
 export async function POST(req: Request) {
   let token: string | undefined;
   try {
@@ -17,13 +17,14 @@ export async function POST(req: Request) {
     /* fall through */
   }
   if (!token) {
-    return NextResponse.json({ error: "Missing invite token" }, { status: 400 });
+    return NextResponse.json({ error: "Missing device token" }, { status: 400 });
   }
 
+  // Only a claimed device_token grants a session — never a raw invite_token.
   const { data: member, error } = await supabase
     .from("members")
     .select("id, label, revoked_at")
-    .eq("token", token)
+    .eq("device_token", token)
     .maybeSingle();
 
   if (error) {
