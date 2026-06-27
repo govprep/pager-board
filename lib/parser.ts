@@ -179,12 +179,12 @@ function parseSes(line: string, receivedAt: string): Incident {
 }
 
 /**
- * The board only shows FRNSW fire incidents: a line marked `FRINC` that carries
- * an incident number. SES pages and anything without an incident number are
- * dropped entirely.
+ * The board only shows real incidents — ones that carry an incident number
+ * (RFS and FRNSW both do). SES pages always parse with an empty incident number,
+ * so this drops SES and any other number-less pages while keeping RFS + FRNSW.
  */
-export function isFrnswIncident(inc: Incident): boolean {
-  return inc.incidentNo.trim() !== "" && /\bFRINC\b/i.test(inc.raw);
+export function hasIncidentNumber(inc: Incident): boolean {
+  return inc.incidentNo.trim() !== "";
 }
 
 /** Parse one raw pager line. Returns null only for empty input. */

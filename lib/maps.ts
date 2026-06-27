@@ -28,10 +28,15 @@ export function staticMapUrl(coords: Coords | null): string | null {
   );
 }
 
+// Tilt the satellite preview for a perspective view. Position is
+// "lng,lat,zoom,bearing,pitch"; pitch is capped at 60 by the API.
+const SAT_PITCH = 30;
+
 /**
- * Same as staticMapUrl but on the satellite-streets style and reading the
+ * Same as staticMapUrl but on the standard satellite style and reading the
  * NEXT_PUBLIC_MAPBOX_TOKEN so it can be used in the browser (e.g. the incident
- * modal). Returns null without coords or a public token.
+ * modal). Tilted ~30° for a perspective view. Returns null without coords or a
+ * public token.
  */
 export function satelliteMapUrl(coords: Coords | null): string | null {
   const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
@@ -39,9 +44,9 @@ export function satelliteMapUrl(coords: Coords | null): string | null {
 
   const { lng, lat } = coords;
   const marker = `pin-l+e01b24(${lng},${lat})`;
-  const center = `${lng},${lat},${SAT_ZOOM},0`;
+  const center = `${lng},${lat},${SAT_ZOOM},0,${SAT_PITCH}`;
   return (
-    `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/` +
+    `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/` +
     `${marker}/${center}/${SIZE}?access_token=${token}`
   );
 }
