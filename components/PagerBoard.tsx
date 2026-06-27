@@ -33,11 +33,26 @@ function typeClass(type: string): string {
 }
 
 
+// Split a unit string into the badges to display. FRNSW labels are
+// "<number> STATION NAME" (e.g. "428 QUEANBEYAN") and must stay as a single
+// badge — even when several are packed in one string after a merge
+// ("357 LAMBTON 454 TARRO" -> two badges). Everything else is split into
+// individual station codes (all-uppercase alphanumeric, 2+ chars).
+function unitTokens(unit: string): string[] {
+  const u = unit.trim();
+  if (!u) return [];
+  if (/^\d+\s+[A-Z]/.test(u)) {
+    const groups = u.match(/\d+\s+[A-Z][A-Z. ]*?(?=\s+\d|\s*$)/g);
+    if (groups) return groups.map(g => g.trim());
+    return [u];
+  }
+  const codes = u.split(/[\s,/]+/).filter(t => /^[A-Z0-9]{2,}$/.test(t));
+  return codes.length > 0 ? codes : [u.split(/\s+/)[0]];
+}
+
 function UnitBadges({ unit }: { unit: string }) {
   if (!unit) return <span className="dim">—</span>;
-  // Only badge tokens that look like station codes: all-uppercase alphanumeric, 2+ chars.
-  const codes = unit.trim().split(/[\s,/]+/).filter(t => /^[A-Z0-9]{2,}$/.test(t));
-  const tokens = codes.length > 0 ? codes : [unit.trim().split(/\s+/)[0]];
+  const tokens = unitTokens(unit);
   return <>{tokens.map(u => <span key={u} className="badge">{u}</span>)}</>;
 }
 
@@ -111,9 +126,7 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
       const key = i.incidentNo || i.id;
       if (!map.has(key)) map.set(key, { inc: i, units: [] });
       const entry = map.get(key)!;
-      const tokens = i.unit.trim().split(/[\s,/]+/).filter(t => /^[A-Z0-9]{2,}$/.test(t));
-      const unitTokens = tokens.length > 0 ? tokens : (i.unit.trim() ? [i.unit.trim().split(/\s+/)[0]] : []);
-      for (const u of unitTokens) {
+      for (const u of unitTokens(i.unit)) {
         if (u && !entry.units.includes(u)) entry.units.push(u);
       }
       if (i.receivedAt < entry.inc.receivedAt) entry.inc = { ...entry.inc, receivedAt: i.receivedAt };
