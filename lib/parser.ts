@@ -115,8 +115,15 @@ function parsePositional(line: string, receivedAt: string): Incident {
   const parts = line.split(" - ").map((p) => p.trim());
   const header = parts[0] ?? "";
   const incidentNo = parts[1] ?? "";
-  const type = parts[2] ?? "";
-  const callClass = parts[3] ?? "";
+  let type = parts[2] ?? "";
+  let callClass = parts[3] ?? "";
+
+  // VRA (Volunteer Rescue Association) pages carry the agency in the type slot
+  // and the real nature in the next segment, e.g. "VRA - ROAD CRASH RESCUE".
+  // Promote that to the type and keep "VRA" as the class.
+  if (/^VRA$/i.test(type) && callClass) {
+    [type, callClass] = [callClass, type];
+  }
 
   const coords = parseCoords(line);
   const lastPart = parts[parts.length - 1] ?? "";
