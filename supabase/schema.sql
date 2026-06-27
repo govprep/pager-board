@@ -66,6 +66,7 @@ create table if not exists public.incident_threads (
 create table if not exists public.members (
   id           uuid        primary key default gen_random_uuid(),
   label        text        not null default '',   -- who the link is for, e.g. "Jane S"
+  token        text,                                -- legacy (pre-split); kept nullable only so the backfill below is valid
   invite_token text        unique,                 -- one-time link secret (unusable once claimed)
   device_token text        unique,                 -- per-device secret, null until claimed
   claimed_at   timestamptz,                         -- when a device redeemed the link
@@ -75,29 +76,24 @@ create table if not exists public.members (
   revoked_at   timestamptz                          -- non-null = access turned off
 );
 
--- Migration for an existing members table (earlier schema had a single `token`).
--- Add the new columns, then backfill so already-enrolled devices keep working:
--- their stored token becomes the device_token, and the row counts as claimed.
+-- Migration for an existing members table (earlier schema had a single, NOT NULL
+-- `token`). Add the new columns, drop the old NOT NULL so new pending rows can
+-- insert without it, then backfill so already-enrolled devices keep working:
+-- their stored token becomes the device_token and the row counts as claimed.
 alter table public.members add column if not exists invite_token text;
 alter table public.members add column if not exists device_token text;
 alter table public.members add column if not exists claimed_at   timestamptz;
 alter table public.members add column if not exists user_agent   text;
-do $$
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'members' and column_name = 'token'
-  ) then
-    update public.members set
-      invite_token = coalesce(invite_token, token),
-      device_token = coalesce(device_token, token),
-      claimed_at   = coalesce(claimed_at, created_at)
-    where token is not null;
-  end if;
-end $$;
+alter table public.members alter column token drop not null;
 
-create unique index if not exists members_invite_token_key on public.members (invite_token);
-create unique index if not exists members_device_token_key on public.members (device_token);
+update public.members set
+  invite_token = coalesce(invite_token, token),
+  device_token = coalesce(device_token, token),
+  claimed_at   = coalesce(claimed_at, created_at)
+where token is not null;
+
+create unique index if not exists members_invite_token_key on public.members(invite_token);
+create unique index if not exists members_device_token_key on public.members(device_token);
 
 alter table public.members enable row level security;
 -- No anon policies: only the service role (API routes) reads/writes this.
