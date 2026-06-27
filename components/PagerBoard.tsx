@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Incident } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
+import { isFrnswIncident } from "@/lib/parser";
 import { satelliteMapUrl } from "@/lib/maps";
 
 function fmt(iso: string, secs = false) {
@@ -189,7 +190,7 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let result = incidents.filter((i) => i.type || i.location || i.incidentNo);
+    let result = incidents.filter(isFrnswIncident);
     if (q) result = result.filter((i) =>
       `${i.incidentNo} ${i.type} ${i.unit} ${i.location} ${i.raw}`
         .toLowerCase()

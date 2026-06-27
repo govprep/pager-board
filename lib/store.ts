@@ -1,5 +1,5 @@
 import type { Incident } from "./types";
-import { parsePagerMessage } from "./parser";
+import { parsePagerMessage, isFrnswIncident } from "./parser";
 import { supabase } from "./supabase";
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,9 @@ export async function addRawMessages(input: string | string[]): Promise<Incident
   const parsed: Incident[] = [];
   for (const line of lines) {
     const inc = parsePagerMessage(line);
-    if (inc) parsed.push(inc);
+    // Only FRNSW incidents (FRINC + an incident number) are stored — SES and
+    // any number-less pages are dropped.
+    if (inc && isFrnswIncident(inc)) parsed.push(inc);
   }
   if (parsed.length === 0) return [];
 

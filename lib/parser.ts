@@ -178,6 +178,15 @@ function parseSes(line: string, receivedAt: string): Incident {
   };
 }
 
+/**
+ * The board only shows FRNSW fire incidents: a line marked `FRINC` that carries
+ * an incident number. SES pages and anything without an incident number are
+ * dropped entirely.
+ */
+export function isFrnswIncident(inc: Incident): boolean {
+  return inc.incidentNo.trim() !== "" && /\bFRINC\b/i.test(inc.raw);
+}
+
 /** Parse one raw pager line. Returns null only for empty input. */
 export function parsePagerMessage(
   raw: string,
