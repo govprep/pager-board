@@ -7,6 +7,7 @@ import type { Coords } from "./types";
 // Docs: https://docs.mapbox.com/api/maps/static-images/
 
 const ZOOM = 14;
+const SAT_ZOOM = 17; // satellite view sits closer so the property is readable
 const SIZE = "600x400@2x"; // @2x = retina; Slack downscales nicely
 
 /**
@@ -38,7 +39,7 @@ export function satelliteMapUrl(coords: Coords | null): string | null {
 
   const { lng, lat } = coords;
   const marker = `pin-l+e01b24(${lng},${lat})`;
-  const center = `${lng},${lat},${ZOOM},0`;
+  const center = `${lng},${lat},${SAT_ZOOM},0`;
   return (
     `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/` +
     `${marker}/${center}/${SIZE}?access_token=${token}`
