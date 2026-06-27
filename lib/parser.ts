@@ -1,4 +1,5 @@
 import type { Incident, Coords } from "./types";
+import { frnswTurnoutLabel } from "./frnsw-stations";
 
 // Pager lines come in (at least) two shapes. The parser sniffs which one it is
 // and is forgiving about everything — a line it can't fully read still yields an
@@ -90,13 +91,18 @@ function parseKeyValue(line: string, receivedAt: string): Incident {
   const incidentNo = incRaw.split("-")[0]?.trim() || incRaw;
   const location = fields.LOC ?? fields.LOCATION ?? fields.ADDR ?? "";
 
+  // FRNSW pages (marked by "FRINC") identify the station by turnout number only —
+  // look it up so the board shows "428 QUEANBEYAN" rather than a bare "428".
+  // Unknown/non-numeric turnouts pass through unchanged.
+  const displayUnit = /\bFRINC\b/i.test(line) ? frnswTurnoutLabel(unit) : unit;
+
   return {
     id: incidentNo
       ? unit ? `${incidentNo}-${unit}` : incidentNo
       : `${unit || "INC"}-${receivedAt}`,
     incidentNo,
     type,
-    unit,
+    unit: displayUnit,
     location,
     coords: parseCoords(line),
     receivedAt,
