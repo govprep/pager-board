@@ -179,12 +179,15 @@ function parseSes(line: string, receivedAt: string): Incident {
 }
 
 /**
- * The board only shows real incidents — ones that carry an incident number
- * (RFS and FRNSW both do). SES pages always parse with an empty incident number,
- * so this drops SES and any other number-less pages while keeping RFS + FRNSW.
+ * The board only shows real incidents — ones that carry a proper incident
+ * number (RFS "26-118273", FRNSW "120047"). A real number is a single token
+ * containing at least one digit. This drops SES (no number at all) and pages
+ * like ambulance/PTS free-text that get mis-parsed so the description lands in
+ * the incident-number slot (it has spaces, so it fails here).
  */
 export function hasIncidentNumber(inc: Incident): boolean {
-  return inc.incidentNo.trim() !== "";
+  const v = inc.incidentNo.trim();
+  return v !== "" && !/\s/.test(v) && /\d/.test(v);
 }
 
 /** Parse one raw pager line. Returns null only for empty input. */
