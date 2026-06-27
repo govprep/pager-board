@@ -1,15 +1,14 @@
 /**
- * Manage board access (single-use invite links).
+ * Manage board access (invite codes — up to a few devices each).
  *
- *   npm run access new "Jane S"          — create a member, print their one-time link
- *   npm run access list                  — show all members + status
- *   npm run access revoke <id|label>     — turn off a member's access
+ *   npm run access new "Jane S"          — create a member, print their code + link
+ *   npm run access list                  — show members, device usage, status
+ *   npm run access revoke <id|label>     — turn off a member (boots all its devices)
  *   npm run access restore <id|label>    — turn it back on
  *
- * Each link enrols exactly one device, then it's spent. Reads
- * NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY from .env.local (same
- * config as the app/feeder). BOARD_URL sets the link host (defaults to
- * http://localhost:3000).
+ * One code enrols up to max_devices (default 3) — enough for a Safari tab, the
+ * installed PWA, and a spare. Reads NEXT_PUBLIC_SUPABASE_URL +
+ * SUPABASE_SERVICE_ROLE_KEY from .env.local. BOARD_URL sets the link host.
  */
 
 import { readFileSync } from "node:fs";
@@ -45,8 +44,17 @@ if (!url || !key) {
 const boardUrl = (process.env.BOARD_URL || "http://localhost:3000").replace(/\/$/, "");
 const db = createClient(url, key, { auth: { persistSession: false } });
 
-function inviteLink(token: string): string {
-  return `${boardUrl}/?invite=${token}`;
+// Short, unambiguous code — no 0/O/1/I to misread when typing on a phone.
+function genCode(): string {
+  const alpha = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = randomBytes(8);
+  let s = "";
+  for (let i = 0; i < 8; i++) s += alpha[bytes[i] % alpha.length];
+  return s;
+}
+
+function inviteLink(code: string): string {
+  return `${boardUrl}/?code=${code}`;
 }
 
 // Find a member by exact id, else unique case-insensitive label match.
@@ -68,31 +76,47 @@ async function create(label: string) {
     console.error('Give the member a label:  npm run access new "Jane S"');
     process.exit(1);
   }
-  const inviteToken = randomBytes(24).toString("base64url");
+  let code = genCode();
+  for (let i = 0; i < 5; i++) {
+    const clash = await db.from("members").select("id").eq("code", code).maybeSingle();
+    if (!clash.data) break;
+    code = genCode();
+  }
   const { data, error } = await db
     .from("members")
-    .insert({ label, invite_token: inviteToken })
+    .insert({ label, code, max_devices: 3 })
     .select()
     .single();
   if (error) throw new Error(error.message);
   console.log(`Created ${data.label} (${data.id})`);
-  console.log(`One-time invite link — send it to them, works on the first device only:`);
-  console.log(`  ${inviteLink(inviteToken)}`);
+  console.log(`  Code: ${data.code}   (works on up to ${data.max_devices} devices)`);
+  console.log(`  Link: ${inviteLink(data.code)}`);
+  console.log(`On a phone: add to home screen first, then enter the code in the app.`);
 }
 
 async function list() {
-  const { data, error } = await db
+  const { data: members, error } = await db
     .from("members")
     .select("*")
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
-  if (!data?.length) return console.log('No members yet:  npm run access new "Name"');
-  for (const m of data) {
-    const state = m.revoked_at ? "REVOKED" : m.claimed_at ? "enrolled" : "pending";
-    const detail = m.claimed_at
-      ? `last seen: ${m.last_seen_at ? new Date(m.last_seen_at).toLocaleString() : "—"}`
-      : `link: ${inviteLink(m.invite_token)}`;
-    console.log(`${m.id}  ${state.padEnd(8)} ${(m.label || "(no label)").padEnd(18)} ${detail}`);
+  if (!members?.length) return console.log('No members yet:  npm run access new "Name"');
+
+  const { data: devices } = await db
+    .from("member_devices")
+    .select("member_id, revoked_at");
+  const used = new Map<string, number>();
+  for (const d of devices ?? []) {
+    if (!d.revoked_at) used.set(d.member_id, (used.get(d.member_id) ?? 0) + 1);
+  }
+
+  for (const m of members) {
+    const status = m.revoked_at ? "REVOKED" : "active";
+    const n = used.get(m.id) ?? 0;
+    console.log(
+      `${m.id}  ${status.padEnd(8)} ${(m.label || "(no label)").padEnd(18)} ` +
+        `code ${String(m.code).padEnd(9)} devices ${n}/${m.max_devices}`,
+    );
   }
 }
 

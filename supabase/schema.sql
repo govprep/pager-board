@@ -53,47 +53,67 @@ create table if not exists public.incident_threads (
   created_at  timestamptz not null default now()
 );
 
--- ── Members / access (single-use invite links) ───────────────────────────────
--- One row per person, with a lifecycle: pending → enrolled → (revoked).
---   pending   : created with an invite_token; the link is ?invite=<invite_token>.
---   enrolled  : a device redeemed the link (/api/enroll) — that single claim sets
---               claimed_at and mints a per-device device_token (stored in the
---               browser). The invite_token can never enrol a second device.
---   revoked   : revoked_at set; the device's next /api/session refresh is refused.
--- The two tokens are deliberately separate: /api/enroll only accepts invite_token
--- (once), /api/session only accepts device_token — so a leaked link can't be
--- replayed into a session, and a claimed link is dead. Service role only.
+-- ── Members / access (invite code → up to N devices) ─────────────────────────
+-- Two tables, both service-role only:
+--   members        — one row per person. Holds a short, typeable `code` (and a
+--                    long link token) plus max_devices (default 3). Revoke the
+--                    member to boot all their devices at once.
+--   member_devices — one row per enrolled device/context. Entering the code (or
+--                    opening the link) at /api/enroll mints a device its own
+--                    device_token, up to the member's max_devices. The browser
+--                    stores that token and refreshes it via /api/session.
+-- A code (not just the link) matters because an installed iOS PWA has its own
+-- storage jar — the user re-enrols it by typing the code inside the PWA, which is
+-- why one code must cover a few devices (Safari tab + PWA + spare).
 create table if not exists public.members (
   id           uuid        primary key default gen_random_uuid(),
-  label        text        not null default '',   -- who the link is for, e.g. "Jane S"
-  token        text,                                -- legacy (pre-split); kept nullable only so the backfill below is valid
-  invite_token text        unique,                 -- one-time link secret (unusable once claimed)
-  device_token text        unique,                 -- per-device secret, null until claimed
-  claimed_at   timestamptz,                         -- when a device redeemed the link
-  user_agent   text,                                -- claiming device, for the admin list
+  label        text        not null default '',   -- who the code is for, e.g. "Jane S"
+  code         text,                                -- short, typeable enrol code
+  token        text,                                -- legacy (pre-split); kept nullable for backfill validity
+  invite_token text,                                -- long link token (?invite=… / ?code=…)
+  max_devices  int         not null default 3,      -- how many devices this code may enrol
   created_at   timestamptz not null default now(),
-  last_seen_at timestamptz,
-  revoked_at   timestamptz                          -- non-null = access turned off
+  revoked_at   timestamptz                          -- non-null = access turned off (all devices)
 );
 
--- Migration for an existing members table (earlier schema had a single, NOT NULL
--- `token`). Add the new columns, drop the old NOT NULL so new pending rows can
--- insert without it, then backfill so already-enrolled devices keep working:
--- their stored token becomes the device_token and the row counts as claimed.
+-- One row per enrolled device/context. device_token is the browser's durable
+-- credential; only /api/session accepts it. Cascades off the member.
+create table if not exists public.member_devices (
+  id           uuid        primary key default gen_random_uuid(),
+  member_id    uuid        not null references public.members(id) on delete cascade,
+  device_token text        not null unique,
+  user_agent   text,
+  claimed_at   timestamptz not null default now(),
+  last_seen_at timestamptz,
+  revoked_at   timestamptz
+);
+alter table public.member_devices enable row level security;
+create index if not exists member_devices_member_id_idx on public.member_devices (member_id);
+
+-- Migration from the earlier single-row-per-device schema.
+alter table public.members add column if not exists code         text;
 alter table public.members add column if not exists invite_token text;
-alter table public.members add column if not exists device_token text;
-alter table public.members add column if not exists claimed_at   timestamptz;
-alter table public.members add column if not exists user_agent   text;
+alter table public.members add column if not exists max_devices  int not null default 3;
+alter table public.members add column if not exists token        text;  -- legacy, pre-split
+alter table public.members add column if not exists device_token text;  -- legacy, pre-split
+alter table public.members add column if not exists claimed_at   timestamptz; -- legacy
+alter table public.members add column if not exists user_agent   text;  -- legacy
+alter table public.members add column if not exists last_seen_at timestamptz; -- legacy (now on member_devices)
 alter table public.members alter column token drop not null;
 
-update public.members set
-  invite_token = coalesce(invite_token, token),
-  device_token = coalesce(device_token, token),
-  claimed_at   = coalesce(claimed_at, created_at)
-where token is not null;
+-- Move already-enrolled devices (old members.device_token) into member_devices.
+insert into public.member_devices (member_id, device_token, user_agent, claimed_at, last_seen_at)
+select id, coalesce(device_token, token), user_agent, coalesce(claimed_at, created_at), last_seen_at
+from public.members
+where coalesce(device_token, token) is not null
+on conflict (device_token) do nothing;
 
-create unique index if not exists members_invite_token_key on public.members(invite_token);
-create unique index if not exists members_device_token_key on public.members(device_token);
+-- Give every member a code if it lacks one (hex from a uuid — unambiguous chars).
+update public.members
+  set code = upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))
+where code is null;
+
+create unique index if not exists members_code_key on public.members (lower(code));
 
 alter table public.members enable row level security;
 -- No anon policies: only the service role (API routes) reads/writes this.

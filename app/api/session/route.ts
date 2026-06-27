@@ -20,26 +20,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing device token" }, { status: 400 });
   }
 
-  // Only a claimed device_token grants a session — never a raw invite_token.
-  const { data: member, error } = await supabase
-    .from("members")
-    .select("id, label, revoked_at")
+  // Only an enrolled device_token grants a session. Locked out if the device or
+  // its member is revoked (revoking the member boots all of its devices).
+  const { data: device, error } = await supabase
+    .from("member_devices")
+    .select("id, revoked_at, member:members(id, label, revoked_at)")
     .eq("device_token", token)
     .maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  if (!member || member.revoked_at) {
+  // The embedded member comes back as an object or single-element array
+  // depending on relationship inference — normalise both shapes.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const m = Array.isArray((device as any)?.member) ? (device as any).member[0] : (device as any)?.member;
+  if (!device || device.revoked_at || !m || m.revoked_at) {
     return NextResponse.json({ error: "Access revoked" }, { status: 403 });
   }
 
   // Best-effort "last seen" stamp; don't fail the login if it errors.
   await supabase
-    .from("members")
+    .from("member_devices")
     .update({ last_seen_at: new Date().toISOString() })
-    .eq("id", member.id);
+    .eq("id", device.id);
 
-  const accessToken = await mintAccessToken(member.id);
-  return NextResponse.json({ accessToken, label: member.label });
+  const accessToken = await mintAccessToken(device.id);
+  return NextResponse.json({ accessToken, label: m.label });
 }
