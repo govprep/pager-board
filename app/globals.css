@@ -172,8 +172,12 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   color: var(--text);
   letter-spacing: 0.02em;
   cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--text-3);
+  text-underline-offset: 3px;
+  padding: 0;
 }
-.inc-link:hover { color: var(--text-2); }
+.inc-link:hover { color: var(--text-2); text-decoration-color: var(--text-2); }
 
 /* time */
 .time-cell {
@@ -258,6 +262,87 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   padding: 60px 24px;
   color: var(--text-3);
   font-size: 13px;
+}
+
+/* ── incident modal ──────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-2);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+.modal-inc {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.modal-close {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-2);
+  padding: 0 4px;
+}
+.modal-close:hover { color: var(--text); }
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
+}
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.modal-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.modal-value {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.modal-field .map-link { margin-left: 0; margin-top: 2px; }
+
+.modal-sat-link { display: block; width: 100%; }
+.modal-sat {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border-2);
+  display: block;
 }
 
 /* ── mobile portrait ─────────────────────────────────── */

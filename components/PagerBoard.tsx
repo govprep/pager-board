@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Incident } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
+import { satelliteMapUrl } from "@/lib/maps";
 
 function fmt(iso: string, secs = false) {
   return new Date(iso).toLocaleTimeString("en-AU", {
@@ -65,10 +66,88 @@ function splitAddress(loc: string): { street: string; locality: string } {
   };
 }
 
+type Entry = { inc: Incident; units: string[] };
+
+function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }) {
+  const { inc, units } = entry;
+  const sat = satelliteMapUrl(inc.coords);
+
+  // Close on Escape.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="modal-inc">{inc.incidentNo || "Incident"}</span>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <div className="modal-body">
+          <div className="modal-field">
+            <span className="modal-label">Incident Type</span>
+            {inc.type
+              ? <span className={`type-tag ${typeClass(inc.type)}`}>{inc.type.toUpperCase()}</span>
+              : <span className="dim">—</span>}
+          </div>
+
+          <div className="modal-field">
+            <span className="modal-label">Address</span>
+            <span className="modal-value">{inc.location || <span className="dim">—</span>}</span>
+            {inc.coords && (
+              <a
+                className="map-link"
+                href={`https://www.google.com/maps?q=${inc.coords.lat},${inc.coords.lng}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                ↗ open in maps
+              </a>
+            )}
+          </div>
+
+          <div className="modal-field">
+            <span className="modal-label">Resources Assigned</span>
+            <div className="cs-cell">
+              {units.length > 0
+                ? units.map(u => <span key={u} className="badge">{u}</span>)
+                : <span className="dim">—</span>}
+            </div>
+          </div>
+
+          {inc.coords && (
+            <div className="modal-field">
+              <span className="modal-label">Satellite</span>
+              {sat ? (
+                <a
+                  href={`https://www.google.com/maps?q=${inc.coords.lat},${inc.coords.lng}&t=k`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="modal-sat-link"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img className="modal-sat" src={sat} alt="Satellite view of incident location" />
+                </a>
+              ) : (
+                <span className="dim">Set NEXT_PUBLIC_MAPBOX_TOKEN to show a satellite view.</span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PagerBoard({ initial }: { initial: Incident[] }) {
   const [incidents, setIncidents] = useState<Incident[]>(initial);
   const [search, setSearch] = useState("");
   const [now, setNow] = useState<Date | null>(null);
+  const [selected, setSelected] = useState<Entry | null>(null);
 
   useEffect(() => {
     setNow(new Date());
@@ -191,14 +270,17 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
                 <tr className="date-row">
                   <td colSpan={5}>{date}</td>
                 </tr>
-                {rows.map(({ inc: i, units }) => {
+                {rows.map((entry) => {
+                  const { inc: i, units } = entry;
                   const tc = typeClass(i.type);
                   const { street, locality } = splitAddress(i.location);
                   const key = i.incidentNo || i.id;
                   return (
                     <tr key={key} className="data-row">
                       <td>
-                        <span className="inc-link">{i.incidentNo || "—"}</span>
+                        {i.incidentNo
+                          ? <button className="inc-link" onClick={() => setSelected(entry)}>{i.incidentNo}</button>
+                          : <span className="dim">—</span>}
                       </td>
                       <td>
                         <span className="time-cell">{fmt(i.receivedAt)}</span>
@@ -227,7 +309,7 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
                       </td>
                       <td>
                         {i.type
-                          ? <span className={`type-tag ${tc}`}>{i.type}</span>
+                          ? <span className={`type-tag ${tc}`}>{i.type.toUpperCase()}</span>
                           : <span className="dim">—</span>}
                       </td>
                       <td>
@@ -252,6 +334,9 @@ export default function PagerBoard({ initial }: { initial: Incident[] }) {
         )}
       </div>
 
+      {selected && (
+        <IncidentModal entry={selected} onClose={() => setSelected(null)} />
+      )}
     </div>
   );
 }
