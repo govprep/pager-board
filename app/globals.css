@@ -512,8 +512,19 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   }
   .search {
     order: 1;        /* sorts after row-1 items, forcing a wrap */
-    flex-basis: 100%;
-    width: 100%;
+    flex: 1 1 auto;  /* shares row 2 with the clock, shrinking as needed */
+    width: auto;
+    min-width: 0;
+  }
+  /* Clock joins the search on row 2, pinned to the right. Drop the desktop
+     `height:100%`: in a wrapped flex header that resolves against the full
+     multi-row height (iOS WebKit), ballooning the clock and pushing the
+     search row down over the first incident card. */
+  .clock {
+    order: 1;
+    height: 32px;
+    font-size: 13px;
+    padding-left: 12px;
   }
 
   /* Convert table → cards */
