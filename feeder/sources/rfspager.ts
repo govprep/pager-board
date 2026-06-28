@@ -48,7 +48,8 @@ const BROWSER_HEADERS = {
   "Accept-Language": "en-AU,en;q=0.9",
 };
 
-// "15 June 2026 20:43:26 "
+// Legacy in-message prefix, e.g. "15 June 2026 20:43:26 ". Older rows still
+// carry it; newer ones don't (the time moved to the row's first column).
 const DATE_PREFIX_RE = /^(\d{1,2})\s+(\w+)\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})\s+/;
 
 function parseDatePrefix(prefix: string): string | undefined {
@@ -56,6 +57,17 @@ function parseDatePrefix(prefix: string): string | undefined {
   if (!m) return undefined;
   // "June 15 2026 20:43:26" is parsed reliably by V8
   const d = new Date(`${m[2]} ${m[1]} ${m[3]} ${m[4]}`);
+  return isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+// Each row's first <td> holds the canonical local time, "2026-06-28 09:45".
+const ROW_TIME_RE = /<td[^>]*>\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?\s*<\/td>/i;
+
+function parseRowTime(rowHtml: string): string | undefined {
+  const m = rowHtml.match(ROW_TIME_RE);
+  if (!m) return undefined;
+  // Build from parts as local time, matching parseDatePrefix's interpretation.
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0);
   return isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
@@ -74,11 +86,10 @@ function extractFromHtml(html: string): PagerLine[] {
       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
       .trim();
 
-    const receivedAt = parseDatePrefix(inner);
-    // rfspager.app renders each message twice: a desktop row prefixed with the
-    // date/time, and a stacked mobile clone with no prefix. Ingest only the
-    // dated desktop row — otherwise the dateless clone parses to the same id and
-    // overwrites the real timestamp with now() on upsert, scrambling the order.
+    // Prefer the legacy in-message prefix (older rows); fall back to the row's
+    // first <td>, where rfspager.app now puts the time for new-format rows.
+    const receivedAt = parseDatePrefix(inner) ?? parseRowTime(row[0]);
+    // No usable time → skip rather than stamp now() and scramble the ordering.
     if (!receivedAt) continue;
     const raw = inner.replace(DATE_PREFIX_RE, "").trim();
     if (isValidPagerLine(raw)) lines.push({ raw, receivedAt });
