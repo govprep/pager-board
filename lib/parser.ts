@@ -127,7 +127,11 @@ function parsePositional(line: string, receivedAt: string): Incident {
 
   const coords = parseCoords(line);
   const lastPart = parts[parts.length - 1] ?? "";
-  const lastIsCoords = COORDS_RE.test(lastPart) || BARE_COORDS_RE.test(lastPart);
+  // Drop a trailing coords segment from the address — whether it parsed cleanly
+  // or arrived truncated (e.g. a cut-off page ending in "[149.498"). Any part
+  // starting with "[" is a coords fragment, never a real address tail.
+  const lastIsCoords =
+    COORDS_RE.test(lastPart) || BARE_COORDS_RE.test(lastPart) || lastPart.startsWith("[");
   const addrEnd = lastIsCoords ? parts.length - 1 : parts.length;
   // parts[3] is a callClass (e.g. "FIRECALL") when it has no comma and is all-caps.
   // If it contains a comma or lowercase it's the address itself (no callClass in this message).

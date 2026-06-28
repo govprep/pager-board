@@ -4,8 +4,8 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Incident } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
-import { satelliteMapUrl } from "@/lib/maps";
 import EnableAlerts from "@/components/EnableAlerts";
+import IncidentMap from "@/components/IncidentMap";
 import { pushSupported, isFollowing, followIncident, unfollowIncident } from "@/lib/push-client";
 
 function fmt(iso: string, secs = false) {
@@ -125,7 +125,6 @@ function FollowButton({ incidentNo }: { incidentNo: string }) {
 
 function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }) {
   const { inc, units } = entry;
-  const sat = satelliteMapUrl(inc.coords);
 
   // Close on Escape.
   useEffect(() => {
@@ -177,22 +176,10 @@ function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }
             </div>
           </div>
 
-          {inc.coords && (
+          {(inc.coords || inc.location) && (
             <div className="modal-field">
-              <span className="modal-label">Satellite</span>
-              {sat ? (
-                <a
-                  href={`https://www.google.com/maps?q=${inc.coords.lat},${inc.coords.lng}&t=k`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="modal-sat-link"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img className="modal-sat" src={sat} alt="Satellite view of incident location" />
-                </a>
-              ) : (
-                <span className="dim">Set NEXT_PUBLIC_MAPBOX_TOKEN to show a satellite view.</span>
-              )}
+              <span className="modal-label">Map</span>
+              <IncidentMap coords={inc.coords} address={inc.location} />
             </div>
           )}
         </div>
