@@ -228,11 +228,38 @@ export default function PagerBoard({
   const [search, setSearch] = useState("");
   const [now, setNow] = useState<Date | null>(null);
   const [selected, setSelected] = useState<Entry | null>(null);
+  // An incident a notification tap asked us to open, held until it lands on the
+  // board (the row may not have loaded yet when the deep link / message arrives).
+  const [pendingIncidentNo, setPendingIncidentNo] = useState<string | null>(null);
 
   useEffect(() => {
     setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Notification taps reach us two ways: a fresh tab opened at ?incident=NNN, or
+  // a message from the service worker when it focused an already-open board.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const deepLink = params.get("incident");
+    if (deepLink) {
+      setSearch("");
+      setPendingIncidentNo(deepLink);
+      // Drop the param so a manual refresh doesn't keep re-opening the card.
+      params.delete("incident");
+      const qs = params.toString();
+      window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    }
+
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === "open-incident" && e.data.incidentNo) {
+        setSearch("");
+        setPendingIncidentNo(String(e.data.incidentNo));
+      }
+    };
+    navigator.serviceWorker?.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker?.removeEventListener("message", onMessage);
   }, []);
 
   // Refresh from the API (used both by Realtime callbacks and the fallback poll).
@@ -268,9 +295,24 @@ export default function PagerBoard({
     // Fallback heartbeat poll every 30s in case the Realtime socket drops.
     const t = setInterval(refresh, 30_000);
 
+    // A backgrounded PWA freezes its timers and drops the Realtime socket, so it
+    // shows stale data the moment it's reopened. Pull fresh on every return to
+    // the foreground (and re-subscribe so live updates resume).
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      refresh();
+      if (channel.state !== "joined") channel.subscribe();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    window.addEventListener("pageshow", onVisible);
+
     return () => {
       getBrowserClient().removeChannel(channel);
       clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      window.removeEventListener("pageshow", onVisible);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -300,6 +342,16 @@ export default function PagerBoard({
     }
     return [...map.values()];
   }, [filtered]);
+
+  // Once a notification's incident has loaded onto the board, pop its card open.
+  useEffect(() => {
+    if (!pendingIncidentNo) return;
+    const entry = merged.find((m) => m.inc.incidentNo === pendingIncidentNo);
+    if (entry) {
+      setSelected(entry);
+      setPendingIncidentNo(null);
+    }
+  }, [pendingIncidentNo, merged]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, typeof merged>();

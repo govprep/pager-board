@@ -63,6 +63,15 @@ function firstLocationName(location: string): string {
   return (location.split(",")[0] ?? "").trim();
 }
 
+// Deep link to a specific incident card. The board reads ?incident= on load (or
+// via a service-worker message when already open) and pops that card open.
+function boardUrl(incidentNo: string): string {
+  const base = process.env.BOARD_URL || "/";
+  if (!incidentNo) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}incident=${encodeURIComponent(incidentNo)}`;
+}
+
 interface DbSubscription {
   endpoint: string;
   p256dh: string;
@@ -194,7 +203,7 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
       const payload = JSON.stringify({
         title: `🚒 ${name || "INCIDENT"}`,
         body: `${units.join(", ") || "A unit"} ${verb} ${where}`,
-        url: process.env.BOARD_URL || "/",
+        url: boardUrl(g.incidentNo),
         tag: g.incidentNo,
       });
       await sendTo((subs as DbSubscription[]) ?? [], payload, dead);
@@ -213,7 +222,7 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
       const payload = JSON.stringify({
         title,
         body,
-        url: process.env.BOARD_URL || "/",
+        url: boardUrl(inc.incidentNo),
         tag: groupKey(inc),
       });
       await sendTo(globalSubs, payload, dead);
