@@ -15,17 +15,19 @@ import type { Coords } from "@/lib/types";
 // without a public token.
 
 const STYLES = {
-  standard: "mapbox://styles/mapbox/standard",
+  // streets-v12 carries a far denser, clearly-labelled road network than the
+  // photorealistic "standard" style, which de-emphasises minor streets.
+  standard: "mapbox://styles/mapbox/streets-v12",
   satellite: "mapbox://styles/mapbox/satellite-streets-v12",
 } as const;
 
 type StyleKey = keyof typeof STYLES;
 
-// Zoomed out a touch from the old static view so nearby roads are in frame, with
-// a pitch + bearing for the 3D look.
-const ZOOM = 15;
-const PITCH = 55;
-const BEARING = -20;
+// Zoomed out so the surrounding street network is in frame, with a gentle pitch
+// + bearing for the 3D look without flattening the road labels.
+const ZOOM = 13.5;
+const PITCH = 45;
+const BEARING = -18;
 
 // Forward-geocode an address to a centre point, biased to Australia. Returns
 // null on a miss or any error — the caller shows a fallback message.
