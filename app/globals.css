@@ -369,19 +369,23 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .status-tag.A { background: #1e1b4b; color: #a5b4fc; border: 1px solid #3730a3; }
 .status-tag.C { background: #111; color: var(--text-3); border: 1px solid var(--border-2); }
 
-/* map link */
+/* map link — soft action chip */
 .map-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 11px;
+  font-weight: 500;
   color: var(--text-2);
-  border: 1px solid var(--border-2);
-  border-radius: 4px;
-  padding: 2px 7px;
-  font-family: var(--mono);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
   margin-left: 6px;
   white-space: nowrap;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
-.map-link:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.map-link:hover { color: var(--text); border-color: var(--border-2); }
 
 .empty {
   text-align: center;

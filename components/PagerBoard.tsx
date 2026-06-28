@@ -36,6 +36,34 @@ function typeClass(type: string): string {
   return "default";
 }
 
+// True on Apple platforms (iPhone/iPad/iPod, plus macOS — modern iPadOS reports
+// as "Macintosh"). Guarded for SSR where navigator is undefined.
+function isApplePlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
+}
+
+// Universal Google Maps link — works everywhere and is the safe SSR / right-click
+// default. Apple users get routed to Apple Maps at click time (see openInMaps).
+function googleMapsHref(coords: { lat: number; lng: number }): string {
+  return `https://www.google.com/maps?q=${coords.lat},${coords.lng}`;
+}
+
+// Open the incident in the platform's preferred maps app. Apple platforms open
+// Apple Maps; everyone else falls through to the anchor's Google Maps href.
+function openInMaps(
+  e: React.MouseEvent<HTMLAnchorElement>,
+  coords: { lat: number; lng: number },
+) {
+  if (!isApplePlatform()) return; // let the default Google Maps href handle it
+  e.preventDefault();
+  window.open(
+    `https://maps.apple.com/?q=${coords.lat},${coords.lng}`,
+    "_blank",
+    "noopener,noreferrer",
+  );
+}
+
 
 // Split a unit string into the badges to display. FRNSW labels are
 // "<number> STATION NAME" (e.g. "428 QUEANBEYAN") and must stay as a single
@@ -158,11 +186,12 @@ function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }
             {inc.coords && (
               <a
                 className="map-link"
-                href={`https://www.google.com/maps?q=${inc.coords.lat},${inc.coords.lng}`}
+                href={googleMapsHref(inc.coords)}
+                onClick={(e) => openInMaps(e, inc.coords!)}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                ↗ open in maps
+                ↗ Maps
               </a>
             )}
           </div>
@@ -367,11 +396,12 @@ export default function PagerBoard({
                           {i.coords && (
                             <a
                               className="map-link"
-                              href={`https://www.google.com/maps?q=${i.coords.lat},${i.coords.lng}`}
+                              href={googleMapsHref(i.coords)}
+                              onClick={(e) => openInMaps(e, i.coords!)}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
-                              ↗ map
+                              ↗ Maps
                             </a>
                           )}
                         </div>
