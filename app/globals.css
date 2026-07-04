@@ -394,6 +394,14 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   font-size: 13px;
 }
 
+/* Infinite-scroll trigger row at the foot of the table. */
+.load-sentinel td {
+  text-align: center;
+  padding: 18px 24px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
 /* ── incident modal ──────────────────────────────────── */
 .modal-overlay {
   position: fixed;

@@ -23,13 +23,35 @@ function toIncident(row: any): Incident {
   };
 }
 
-/** Most recent incidents, newest first. */
-export async function listIncidents(limit = 30): Promise<Incident[]> {
-  const { data, error } = await supabase
+// Only the columns the board actually renders/searches — keeps the payload
+// lean so large pages stay fast. (Drops `fields`, `slacked_at`, etc.)
+const LIST_COLUMNS = "id, incident_no, type, unit, location, coords, received_at, raw";
+
+/**
+ * A page of incidents, newest first. Pass the `(before, beforeId)` of the
+ * oldest row you already have to fetch the next older page (keyset pagination:
+ * fast at any depth, and no duplicate/skipped rows even on tied timestamps).
+ */
+export async function listIncidents(
+  limit = 200,
+  before?: string,
+  beforeId?: string,
+): Promise<Incident[]> {
+  let q = supabase
     .from("incidents")
-    .select("*")
+    .select(LIST_COLUMNS)
     .order("received_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(limit);
+
+  if (before) {
+    // Rows strictly older than the (received_at, id) cursor.
+    q = beforeId
+      ? q.or(`received_at.lt.${before},and(received_at.eq.${before},id.lt.${beforeId})`)
+      : q.lt("received_at", before);
+  }
+
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return (data ?? []).map(toIncident);
 }

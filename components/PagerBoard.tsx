@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Incident } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
@@ -95,6 +95,20 @@ function splitAddress(loc: string): { street: string; locality: string } {
     street: parts[0]?.trim() ?? "",
     locality: parts.slice(1).join(", ").trim(),
   };
+}
+
+// How many rows to pull per request. The board loads the newest page first,
+// then fetches older pages on scroll (see the IntersectionObserver below).
+const PAGE_SIZE = 200;
+
+// Combine two row lists, keyed by id (unique per incident+unit), newest first.
+// Later lists win on conflict, so a refresh's fresh rows replace stale copies.
+function mergeById(...lists: Incident[][]): Incident[] {
+  const byId = new Map<string, Incident>();
+  for (const list of lists) for (const i of list) byId.set(i.id, i);
+  return [...byId.values()].sort((a, b) =>
+    a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : 0,
+  );
 }
 
 type Entry = { inc: Incident; units: string[] };
@@ -228,6 +242,16 @@ export default function PagerBoard({
   const [search, setSearch] = useState("");
   const [now, setNow] = useState<Date | null>(null);
   const [selected, setSelected] = useState<Entry | null>(null);
+  // Infinite scroll: whether older rows remain to load, and a guard against
+  // firing overlapping "load older" fetches. `incidentsRef` mirrors the state
+  // so the observer callback always reads the current oldest-row cursor.
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const incidentsRef = useRef<Incident[]>([]);
+  const loadingRef = useRef(false);
+  const sentinelRef = useRef<HTMLTableRowElement | null>(null);
+
+  useEffect(() => { incidentsRef.current = incidents; }, [incidents]);
   // An incident a notification tap asked us to open, held until it lands on the
   // board (the row may not have loaded yet when the deep link / message arrives).
   const [pendingIncidentNo, setPendingIncidentNo] = useState<string | null>(null);
@@ -262,20 +286,59 @@ export default function PagerBoard({
     return () => navigator.serviceWorker?.removeEventListener("message", onMessage);
   }, []);
 
-  // Refresh from the API (used both by Realtime callbacks and the fallback poll).
-  // /api/incidents is members-only, so attach this device's access token.
-  async function refresh() {
+  // Fetch one page from the members-only API (token attached). Pass the oldest
+  // row you have to page backwards; omit it for the newest page. Returns null
+  // on any failure so callers can keep the board they already have.
+  async function fetchPage(before?: Incident): Promise<Incident[] | null> {
     try {
       const token = getToken();
-      const res = await fetch("/api/incidents", {
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      if (before) {
+        params.set("before", before.receivedAt);
+        params.set("beforeId", before.id);
+      }
+      const res = await fetch(`/api/incidents?${params}`, {
         cache: "no-store",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.incidents)) setIncidents(data.incidents);
-      }
-    } catch { /* keep last board */ }
+      if (!res.ok) return null;
+      const data = await res.json();
+      return Array.isArray(data.incidents) ? data.incidents : [];
+    } catch {
+      return null;
+    }
+  }
+
+  // Pull the newest page. Used for the first load and every Realtime/poll
+  // refresh. A short page means it's the whole table, so treat it as
+  // authoritative (reflects deletes/wipes); a full page means more rows exist
+  // below, so fold it into the older pages we've already loaded.
+  async function refresh() {
+    const page = await fetchPage();
+    if (!page) return;
+    if (page.length < PAGE_SIZE) {
+      setIncidents(page);
+      setHasMore(false);
+    } else {
+      setIncidents((prev) => mergeById(prev, page));
+      if (incidentsRef.current.length === 0) setHasMore(true);
+    }
+  }
+
+  // Append the next older page. Fired by the scroll sentinel below.
+  async function loadMore() {
+    if (loadingRef.current || !hasMore) return;
+    const oldest = incidentsRef.current[incidentsRef.current.length - 1];
+    if (!oldest) return;
+    loadingRef.current = true;
+    setLoadingMore(true);
+    const page = await fetchPage(oldest);
+    if (page) {
+      setIncidents((prev) => mergeById(prev, page));
+      if (page.length < PAGE_SIZE) setHasMore(false);
+    }
+    loadingRef.current = false;
+    setLoadingMore(false);
   }
 
   useEffect(() => {
@@ -362,6 +425,22 @@ export default function PagerBoard({
     }
     return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [merged]);
+
+  // Load older rows as the sentinel row nears the viewport. `rootMargin` starts
+  // the fetch ~600px early so scrolling stays smooth. Re-runs when `hasMore`
+  // flips (mounting/unmounting the sentinel) so the observer tracks it.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || search) return;
+    const obs = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) loadMore(); },
+      { rootMargin: "600px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  // Re-observe when a load finishes so a still-visible sentinel keeps paging.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, search, loadingMore]);
 
   return (
     <div className="app">
@@ -475,6 +554,11 @@ export default function PagerBoard({
                 })}
               </Fragment>
             ))}
+            {hasMore && !search && (
+              <tr ref={sentinelRef} className="load-sentinel">
+                <td colSpan={5}>{loadingMore ? "Loading earlier incidents…" : ""}</td>
+              </tr>
+            )}
           </tbody>
         </table>
 

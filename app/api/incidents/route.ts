@@ -13,12 +13,21 @@ async function isAuthed(req: Request): Promise<boolean> {
   return (await verifyAccessToken(token)) !== null;
 }
 
-// GET /api/incidents  -> current board, newest first. Members only.
+// GET /api/incidents  -> a page of the board, newest first. Members only.
+// Query params (all optional):
+//   limit     page size (default 200, capped at 500)
+//   before    received_at of the oldest row you have  ┐ keyset cursor for
+//   beforeId  id of that same row                      ┘ the next older page
 export async function GET(req: Request) {
   if (!(await isAuthed(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const incidents = await listIncidents();
+  const url = new URL(req.url);
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 500);
+  const before = url.searchParams.get("before") ?? undefined;
+  const beforeId = url.searchParams.get("beforeId") ?? undefined;
+
+  const incidents = await listIncidents(limit, before, beforeId);
   return NextResponse.json({ incidents });
 }
 
