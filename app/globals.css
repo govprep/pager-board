@@ -173,6 +173,32 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
 .signout-btn:hover { border-color: var(--text-3); color: var(--text); }
 
 
+/* ── landing intro splash ────────────────────────────── */
+.intro-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  opacity: 1;
+  transition: opacity 600ms ease;
+}
+.intro-splash-out { opacity: 0; pointer-events: none; }
+.intro-logo {
+  width: 160px;
+  height: 160px;
+  object-fit: cover;
+  border-radius: 20px;
+  box-shadow: 0 0 80px rgba(255, 255, 255, 0.1);
+  animation: intro-spin 1s linear infinite;
+}
+@keyframes intro-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ── auth / SMS OTP login ────────────────────────────── */
 .auth-screen {
   min-height: 100dvh;
