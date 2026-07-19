@@ -138,6 +138,14 @@ create table if not exists public.push_subscriptions (
 alter table public.push_subscriptions enable row level security;
 -- No anon policies: only the service role (API routes + feeder) touches this.
 
+-- ── Stand-down flags ─────────────────────────────────────────────────────────
+-- Set when a STOP / STAND DOWN / NNTA message arrives referencing this incident
+-- number (see lib/standdown.ts). NULL = not stood down. Stamped on every row
+-- sharing that incident_no, so the flag shows regardless of which row the
+-- board picks as the group's representative.
+alter table public.incidents
+  add column if not exists stopped_at timestamptz;
+
 -- One row per (incident, device) the user has chosen to follow from the incident
 -- modal. The feeder reads this to know who to notify when a new unit is added to
 -- an already-known incident ("CMEASCR1 was added to RINGWOOD RD"). Cascades off

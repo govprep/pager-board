@@ -288,7 +288,25 @@ tr.date-row td {
 
 tbody tr.data-row { border-bottom: 1px solid var(--border); }
 tbody tr.data-row:hover { background: var(--surface-2); }
+tbody tr.data-row.stopped { background: rgba(127, 29, 29, 0.12); }
+tbody tr.data-row.stopped:hover { background: rgba(127, 29, 29, 0.2); }
 tbody td { padding: 10px 14px; vertical-align: middle; }
+
+/* stand-down flag (STOP / STAND DOWN / NNTA received for this incident) */
+.stop-flag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  margin-left: 8px;
+  border-radius: 4px;
+  background: #7f1d1d;
+  color: #fca5a5;
+  border: 1px solid #b91c1c;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
 
 /* incident number */
 .inc-link {
@@ -437,6 +455,10 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   position: sticky;
   top: 0;
   background: var(--surface);
+}
+.modal-inc-group {
+  display: flex;
+  align-items: center;
 }
 .modal-inc {
   font-family: var(--mono);

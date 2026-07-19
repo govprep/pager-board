@@ -1,5 +1,6 @@
 import type { PostFn, PagerLine } from "../poster";
 import { isValidPagerLine } from "../filter";
+import { standDownIncidentNo } from "../../lib/standdown";
 
 const PAGE_URL = "https://rfspager.app/pager";
 const seen = new Set<string>();
@@ -92,7 +93,7 @@ function extractFromHtml(html: string): PagerLine[] {
     // No usable time → skip rather than stamp now() and scramble the ordering.
     if (!receivedAt) continue;
     const raw = inner.replace(DATE_PREFIX_RE, "").trim();
-    if (isValidPagerLine(raw)) lines.push({ raw, receivedAt });
+    if (isValidPagerLine(raw) || standDownIncidentNo(raw)) lines.push({ raw, receivedAt });
   }
 
   return lines;

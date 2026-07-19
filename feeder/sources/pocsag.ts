@@ -1,5 +1,6 @@
 import type { PostFn } from "../poster";
 import { isValidPagerLine } from "../filter";
+import { standDownIncidentNo } from "../../lib/standdown";
 
 const BASE_URL = "https://pocsag.net";
 
@@ -40,7 +41,7 @@ export async function pollPocsag(post: PostFn): Promise<void> {
     if (/^SES$/i.test(msg.agency ?? "")) return;
 
     const raw = msg.message.trim();
-    if (!isValidPagerLine(raw)) return;
+    if (!isValidPagerLine(raw) && !standDownIncidentNo(raw)) return;
 
     const receivedAt = msg.timestamp
       ? new Date(msg.timestamp * 1000).toISOString()

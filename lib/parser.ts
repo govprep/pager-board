@@ -84,6 +84,7 @@ function parseKeyValue(line: string, receivedAt: string): Incident {
       receivedAt,
       fields,
       raw: line,
+      stoppedAt: null,
     };
   }
 
@@ -108,6 +109,7 @@ function parseKeyValue(line: string, receivedAt: string): Incident {
     receivedAt,
     fields,
     raw: line,
+    stoppedAt: null,
   };
 }
 
@@ -162,6 +164,7 @@ function parsePositional(line: string, receivedAt: string): Incident {
     receivedAt,
     fields,
     raw: line,
+    stoppedAt: null,
   };
 }
 
@@ -186,6 +189,7 @@ function parseSes(line: string, receivedAt: string): Incident {
     receivedAt,
     fields: {},
     raw: line,
+    stoppedAt: null,
   };
 }
 

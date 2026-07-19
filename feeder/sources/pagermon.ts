@@ -1,5 +1,6 @@
 import type { PostFn, PagerLine } from "../poster";
 import { isValidPagerLine } from "../filter";
+import { standDownIncidentNo } from "../../lib/standdown";
 
 interface PagerMonMessage {
   id: number;
@@ -13,7 +14,7 @@ interface PagerMonMessage {
 
 function isUsable(m: PagerMonMessage): boolean {
   if (m.ignore) return false;
-  return isValidPagerLine(m.message);
+  return isValidPagerLine(m.message) || !!standDownIncidentNo(m.message);
 }
 
 interface PagerMonResponse {

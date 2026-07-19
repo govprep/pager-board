@@ -61,6 +61,7 @@ function rowToIncident(row: any): Incident {
     receivedAt: row.received_at,
     fields: row.fields ?? {},
     raw: row.raw,
+    stoppedAt: row.stopped_at ?? null,
   };
 }
 

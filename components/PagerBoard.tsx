@@ -111,7 +111,11 @@ function mergeById(...lists: Incident[][]): Incident[] {
   );
 }
 
-type Entry = { inc: Incident; units: string[] };
+type Entry = { inc: Incident; units: string[]; stopped: boolean };
+
+function StopFlag() {
+  return <span className="stop-flag" title="Stand-down received for this incident">STOP</span>;
+}
 
 // Per-incident "Follow updates" toggle. Subscribing enables device push (if it
 // isn't already) and registers this device to be notified when a unit is added
@@ -166,7 +170,7 @@ function FollowButton({ incidentNo }: { incidentNo: string }) {
 }
 
 function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }) {
-  const { inc, units } = entry;
+  const { inc, units, stopped } = entry;
 
   // Close on Escape.
   useEffect(() => {
@@ -179,7 +183,10 @@ function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-inc">{inc.incidentNo || "Incident"}</span>
+          <div className="modal-inc-group">
+            <span className="modal-inc">{inc.incidentNo || "Incident"}</span>
+            {stopped && <StopFlag />}
+          </div>
           <div className="modal-head-actions">
             {inc.incidentNo && <FollowButton incidentNo={inc.incidentNo} />}
             <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
@@ -393,14 +400,15 @@ export default function PagerBoard({
 
   // Merge rows that share the same incident number into one display entry.
   const merged = useMemo(() => {
-    const map = new Map<string, { inc: Incident; units: string[] }>();
+    const map = new Map<string, Entry>();
     for (const i of filtered) {
       const key = i.incidentNo || i.id;
-      if (!map.has(key)) map.set(key, { inc: i, units: [] });
+      if (!map.has(key)) map.set(key, { inc: i, units: [], stopped: false });
       const entry = map.get(key)!;
       for (const u of unitTokens(i.unit)) {
         if (u && !entry.units.includes(u)) entry.units.push(u);
       }
+      if (i.stoppedAt) entry.stopped = true;
       if (i.receivedAt < entry.inc.receivedAt) entry.inc = { ...entry.inc, receivedAt: i.receivedAt };
     }
     return [...map.values()];
@@ -500,16 +508,17 @@ export default function PagerBoard({
                   <td colSpan={5}>{date}</td>
                 </tr>
                 {rows.map((entry) => {
-                  const { inc: i, units } = entry;
+                  const { inc: i, units, stopped } = entry;
                   const tc = typeClass(i.type);
                   const { street, locality } = splitAddress(i.location);
                   const key = i.incidentNo || i.id;
                   return (
-                    <tr key={key} className="data-row">
+                    <tr key={key} className={`data-row${stopped ? " stopped" : ""}`}>
                       <td>
                         {i.incidentNo
                           ? <button className="inc-link" onClick={() => setSelected(entry)}>{i.incidentNo}</button>
                           : <span className="dim">—</span>}
+                        {stopped && <StopFlag />}
                       </td>
                       <td>
                         <span className="time-cell">{fmt(i.receivedAt)}</span>

@@ -25,4 +25,6 @@ export interface Incident {
   fields: Record<string, string>;
   /** Original untouched pager line. */
   raw: string;
+  /** When a STOP/STAND DOWN/NNTA message flagged this incident, else null. */
+  stoppedAt: string | null;
 }

@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parsePagerMessage, hasIncidentNumber } from "../lib/parser";
+import { standDownIncidentNo } from "../lib/standdown";
 import type { Incident } from "../lib/types";
 import { postPending } from "./slack";
 import { pushPending } from "./push";
@@ -39,6 +40,29 @@ export function makeWriter(): Writer {
   }
 
   async function write(lines: PagerLine[], source: string) {
+    if (!lines.length) return;
+
+    // Stand-down notices (STOP/STAND DOWN/NNTA) flag an existing incident
+    // rather than being parsed as a page of their own — pull them out first so
+    // they never reach parsePagerMessage (which would otherwise read "STOP" as
+    // a real TYPE/location update and clobber the incident it refers to on
+    // upsert).
+    const standDownNos = new Set<string>();
+    const normalLines: PagerLine[] = [];
+    for (const line of lines) {
+      const no = standDownIncidentNo(line.raw);
+      if (no) standDownNos.add(no);
+      else normalLines.push(line);
+    }
+    if (standDownNos.size) {
+      const { error } = await db
+        .from("incidents")
+        .update({ stopped_at: new Date().toISOString() })
+        .in("incident_no", [...standDownNos]);
+      if (error) console.error(`[${source}] stand-down update:`, error.message);
+      else console.log(`[${source}] stood down ${standDownNos.size} incident(s)`);
+    }
+    lines = normalLines;
     if (!lines.length) return;
 
     // Track whether each line carried an explicit time. parsePagerMessage fills

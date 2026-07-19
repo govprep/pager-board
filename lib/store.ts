@@ -1,5 +1,6 @@
 import type { Incident } from "./types";
 import { parsePagerMessage, hasIncidentNumber } from "./parser";
+import { standDownIncidentNo } from "./standdown";
 import { supabase } from "./supabase";
 
 // ---------------------------------------------------------------------------
@@ -20,12 +21,14 @@ function toIncident(row: any): Incident {
     receivedAt: row.received_at,
     fields: row.fields ?? {},
     raw: row.raw,
+    stoppedAt: row.stopped_at ?? null,
   };
 }
 
 // Only the columns the board actually renders/searches — keeps the payload
 // lean so large pages stay fast. (Drops `fields`, `slacked_at`, etc.)
-const LIST_COLUMNS = "id, incident_no, type, unit, location, coords, received_at, raw";
+const LIST_COLUMNS =
+  "id, incident_no, type, unit, location, coords, received_at, raw, stopped_at";
 
 /**
  * A page of incidents, newest first. Pass the `(before, beforeId)` of the
@@ -72,8 +75,22 @@ export async function getIncident(id: string): Promise<Incident | undefined> {
  */
 export async function addRawMessages(input: string | string[]): Promise<Incident[]> {
   const lines = Array.isArray(input) ? input : [input];
-  const parsed: Incident[] = [];
+
+  // Stand-down notices (STOP/STAND DOWN/NNTA) flag an existing incident rather
+  // than being stored as a page of their own — pull them out first so they
+  // never reach the parser (which would otherwise read "STOP" as a real
+  // TYPE/location update and clobber the incident it refers to on upsert).
+  const standDownNos = new Set<string>();
+  const normalLines: string[] = [];
   for (const line of lines) {
+    const no = standDownIncidentNo(line);
+    if (no) standDownNos.add(no);
+    else normalLines.push(line);
+  }
+  if (standDownNos.size) await applyStandDowns([...standDownNos]);
+
+  const parsed: Incident[] = [];
+  for (const line of normalLines) {
     const inc = parsePagerMessage(line);
     // Only numbered incidents (RFS + FRNSW) are stored — SES and any
     // number-less pages are dropped.
@@ -99,6 +116,15 @@ export async function addRawMessages(input: string | string[]): Promise<Incident
     .select();
   if (error) throw new Error(error.message);
   return (data ?? []).map(toIncident);
+}
+
+/** Stamp `stopped_at` on every row of the given incident numbers. */
+async function applyStandDowns(incidentNos: string[]): Promise<void> {
+  const { error } = await supabase
+    .from("incidents")
+    .update({ stopped_at: new Date().toISOString() })
+    .in("incident_no", incidentNos);
+  if (error) throw new Error(error.message);
 }
 
 /** Wipe all incidents. */

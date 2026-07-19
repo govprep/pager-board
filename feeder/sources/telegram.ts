@@ -1,11 +1,12 @@
 import type { PostFn, PagerLine } from "../poster";
 import { isValidPagerLine } from "../filter";
+import { standDownIncidentNo } from "../../lib/standdown";
 
 function extractPagerLine(raw: string): string | null {
   // Format: "DISTRICT - STATION\nMessage: {pager line}"
   const m = raw.match(/^Message:\s*(.+)$/m);
   const line = m ? m[1].trim() : raw.trim();
-  return isValidPagerLine(line) ? line : null;
+  return isValidPagerLine(line) || standDownIncidentNo(line) ? line : null;
 }
 
 export async function pollTelegram(post: PostFn): Promise<void> {
