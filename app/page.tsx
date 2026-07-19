@@ -1,5 +1,4 @@
 import AccessGate from "@/components/AccessGate";
-import IntroGate from "@/components/IntroGate";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +9,5 @@ export const dynamic = "force-dynamic";
 // the device's invite token exchanges for a valid session; the board then loads
 // incidents via the authed /api/incidents fetch.
 export default function Page() {
-  return (
-    <IntroGate>
-      <AccessGate />
-    </IntroGate>
-  );
+  return <AccessGate />;
 }
