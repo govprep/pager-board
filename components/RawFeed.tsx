@@ -305,7 +305,7 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
               <th style={{ width: 62 }}>Time</th>
               <th style={{ width: 82 }}>Capcode</th>
               <th style={{ width: 130 }}>Agency</th>
-              <th style={{ width: 190 }}>Brigade</th>
+              <th style={{ width: 190 }}>Unit</th>
               <th>Message</th>
               <th style={{ width: 150 }}>Src</th>
             </tr>
