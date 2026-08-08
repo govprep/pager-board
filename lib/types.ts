@@ -52,6 +52,12 @@ export interface PagerMessage {
   status: RawStatus;
   /** The incident number the line refers to, when it carries one. */
   incidentNo: string | null;
+  /** Pager capcode the message was sent to, e.g. "0125111". */
+  capcode: string | null;
+  /** Issuing agency, e.g. "FRNSW", "Lower Hunter". */
+  agency: string | null;
+  /** Responding brigade/station, e.g. "251 Cardiff", "428 QUEANBEYAN". */
+  origin: string | null;
   /** Every feeder source that has reported this line, e.g. ["pocsag","telegram"]. */
   sources: string[];
   /** Earliest known time for the message itself (not the time we stored it). */

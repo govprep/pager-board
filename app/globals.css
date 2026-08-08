@@ -35,6 +35,10 @@
   --btn:        #1d4ed8;
   --btn-reset:  #292929;
 
+  /* raw feed accent — terminal cyan against the otherwise monochrome board */
+  --accent:     #22d3ee;
+  --accent-dim: rgba(34, 211, 238, 0.30);
+
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, "SFMono-Regular", Consolas, Menlo, monospace;
 }
@@ -602,12 +606,46 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .back-btn:hover { border-color: var(--text-3); color: var(--text); }
 
 .raw-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--text);
   padding-left: 12px;
   white-space: nowrap;
+}
+.raw-sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* Live count readout — control-room style. */
+.raw-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-right: 4px;
+  flex: none;
+}
+.raw-readout-n {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+.raw-readout-l {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-3);
 }
 
 /* Status filter chips, directly under the topbar. */
@@ -648,23 +686,85 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   white-space: pre-wrap;
 }
 
-/* Rows the board never showed are dimmed, so the traffic that DID make it
-   through still reads at a glance. */
+/* Status lives in a left accent bar rather than a badge per row: "on board" is
+   the expected outcome for most traffic, so labelling every row with it buries
+   the exceptions. Only stand-downs and drops get an inline tag (below). */
+.raw-row td:first-child { position: relative; }
+.raw-row td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+.raw-row.standdown td:first-child::before { background: #dc2626; }
+.raw-row.dropped   td:first-child::before { background: var(--text-3); }
+
 .raw-row.dropped .raw-line { color: var(--text-2); }
 .raw-row.standdown { background: rgba(127, 29, 29, 0.10); }
 .raw-row.standdown:hover { background: rgba(127, 29, 29, 0.18); }
 
+/* Relative age, sitting under the wall-clock time. */
+.raw-age {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-3);
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+}
+
+/* Capcode — the pager address the message was sent to. */
+.capcode {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+
+/* Issuing agency: FRNSW, Lower Hunter, Southern Highlands, … */
+.agency-tag {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid var(--border-2);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Responding brigade/station. */
+.origin-cell {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* Inline exception tag, ahead of the message text. */
 .raw-status {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 10px;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--sans);
+  font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   white-space: nowrap;
+  vertical-align: 1px;
 }
-.raw-status.incident  { background: var(--tag-medical-bg); color: var(--tag-medical-text); }
 .raw-status.standdown { background: #7f1d1d; color: #fca5a5; }
 .raw-status.dropped   { background: var(--tag-default-bg); color: var(--tag-default-text); }
 
@@ -731,14 +831,34 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   /* Row 3: resources (full width, wrap left-to-right) */
   .list-wrap tr.data-row td:nth-child(5) { grid-column: 1 / -1; grid-row: 3; }
 
-  /* Raw feed cards: only 4 columns, and the message wants the full width, so
-     it overrides the incident-board placements above. */
+  /* Raw feed cards. Six columns on desktop collapse to four stacked rows, so
+     these override the incident-board placements above. */
   .raw-title { padding-left: 0; }
-  .list-wrap tr.raw-row { grid-template-columns: auto auto 1fr; }
-  /* Row 1: time | status | sources (end) */
+  .raw-sub { display: none; }
+  .list-wrap tr.raw-row {
+    grid-template-columns: auto auto 1fr;
+    padding-left: 14px;   /* room for the status accent bar */
+  }
+  /* The accent bar spans the whole card rather than one cell. */
+  .list-wrap tr.raw-row td:first-child::before {
+    left: -14px;
+    top: -12px;
+    bottom: -12px;
+  }
+  /* Row 1: time | capcode | agency (end) */
   .list-wrap tr.raw-row td:nth-child(1) { grid-column: 1; grid-row: 1; align-self: center; }
   .list-wrap tr.raw-row td:nth-child(2) { grid-column: 2; grid-row: 1; align-self: center; }
-  .list-wrap tr.raw-row td:nth-child(4) { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; }
-  /* Row 2: the line itself (full width) */
-  .list-wrap tr.raw-row td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
+  .list-wrap tr.raw-row td:nth-child(3) { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; }
+  /* Row 2: brigade */
+  .list-wrap tr.raw-row td:nth-child(4) { grid-column: 1 / -1; grid-row: 2; }
+  /* Row 3: the line itself */
+  .list-wrap tr.raw-row td:nth-child(5) { grid-column: 1 / -1; grid-row: 3; }
+  /* Row 4: sources */
+  .list-wrap tr.raw-row td:nth-child(6) { grid-column: 1 / -1; grid-row: 4; }
+
+  /* The age gutter sits inline with the clock time on narrow screens. */
+  .raw-age { display: inline; margin-left: 6px; }
+
+  /* Hide empty-cell placeholders — they'd be stray dots in a stacked card. */
+  .list-wrap tr.raw-row td .dim { color: var(--text-3); }
 }

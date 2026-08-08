@@ -94,6 +94,25 @@ function parseRowTime(rowHtml: string): string | undefined {
   return isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
+/** Strip tags and decode entities from a table cell. */
+function cellText(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Each row's <td>s are: Date Time | Capcode | Agency | Brigade. The message
+// itself lives in the <th scope="row">. The three metadata columns are what
+// gives /raw a real origin ("0010744", "Lower Hunter",
+// "Williamtown/Salt Ash Brigade") instead of a bare station code.
+function rowCells(rowHtml: string): string[] {
+  return [...rowHtml.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => cellText(m[1]));
+}
+
 function extractFromHtml(html: string): PagerLine[] {
   const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
   const lines: PagerLine[] = [];
@@ -114,11 +133,22 @@ function extractFromHtml(html: string): PagerLine[] {
     const receivedAt = parseDatePrefix(inner) ?? parseRowTime(row[0]);
     const raw = inner.replace(DATE_PREFIX_RE, "").trim();
     if (!raw) continue;
+
+    // [0] is the timestamp we already parsed above; the rest is the origin.
+    const [, capcode, agency, origin] = rowCells(row[0]);
+
     // Every line goes through — the board filter now lives in poster.ts so the
     // raw feed sees what the board rejects. A row with no usable time still
     // gets recorded, but is barred from the board: stamping it now() would
     // scramble the ordering.
-    lines.push({ raw, receivedAt, boardEligible: receivedAt != null });
+    lines.push({
+      raw,
+      receivedAt,
+      boardEligible: receivedAt != null,
+      capcode,
+      agency,
+      origin,
+    });
   }
 
   return lines;

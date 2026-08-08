@@ -189,6 +189,9 @@ create table if not exists public.pager_messages (
   raw           text        not null,                  -- normalised line as it arrived
   status        text        not null default 'dropped', -- incident | standdown | dropped
   incident_no   text,                                  -- when the line carries one
+  capcode       text,                                  -- pager capcode, e.g. 0125111
+  agency        text,                                  -- FRNSW, Lower Hunter, …
+  origin        text,                                  -- brigade/station, e.g. "251 Cardiff"
   sources       text[]      not null default '{}',     -- every feeder that reported it
   received_at   timestamptz not null default now(),    -- earliest known message time
   first_seen_at timestamptz not null default now(),    -- when we first recorded it
@@ -203,6 +206,11 @@ create index if not exists pager_messages_received_at_idx
 -- Status filter chips on /raw.
 create index if not exists pager_messages_status_idx
   on public.pager_messages (status);
+
+-- Added after the first release, so existing installs get them too.
+alter table public.pager_messages add column if not exists capcode text;
+alter table public.pager_messages add column if not exists agency  text;
+alter table public.pager_messages add column if not exists origin  text;
 
 -- Members-only, exactly like incidents: reads require a verified session, and
 -- writes come from the service role (feeder + API routes), which bypasses RLS.
@@ -236,12 +244,16 @@ returns void
 language sql
 as $$
   insert into public.pager_messages
-    (hash, raw, status, incident_no, sources, received_at, first_seen_at, last_seen_at, seen_count)
+    (hash, raw, status, incident_no, capcode, agency, origin,
+     sources, received_at, first_seen_at, last_seen_at, seen_count)
   select
     t.hash,
     min(t.raw),          -- identical within a hash group (raw is normalised)
     max(t.status),       -- text order happens to rank standdown > incident > dropped
     min(t.incident_no),  -- aggregates skip NULLs, so a number wins over none
+    min(t.capcode),
+    min(t.agency),
+    min(t.origin),
     array_agg(distinct t.source),
     min(t.received_at),
     now(),
@@ -253,6 +265,9 @@ as $$
       m ->> 'raw'         as raw,
       m ->> 'status'      as status,
       m ->> 'incident_no' as incident_no,
+      m ->> 'capcode'     as capcode,
+      m ->> 'agency'      as agency,
+      m ->> 'origin'      as origin,
       m ->> 'source'      as source,
       coalesce((m ->> 'received_at')::timestamptz, now()) as received_at
     from jsonb_array_elements(payload) as m
@@ -264,6 +279,11 @@ as $$
     last_seen_at = greatest(pager_messages.last_seen_at, excluded.last_seen_at),
     received_at  = least(pager_messages.received_at, excluded.received_at),
     incident_no  = coalesce(pager_messages.incident_no, excluded.incident_no),
+    -- Same line seen again, this time from a source that knows the brigade:
+    -- fill the blanks, never overwrite what we already have.
+    capcode      = coalesce(pager_messages.capcode, excluded.capcode),
+    agency       = coalesce(pager_messages.agency,  excluded.agency),
+    origin       = coalesce(pager_messages.origin,  excluded.origin),
     sources      = (
       select array_agg(distinct s)
       from unnest(pager_messages.sources || excluded.sources) as s

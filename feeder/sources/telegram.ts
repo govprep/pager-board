@@ -1,13 +1,32 @@
 import type { PostFn, PagerLine } from "../poster";
 import { passesBoardFilter } from "../../lib/filter";
 
-// Pull the pager line out of the Telegram wrapper. Everything extracted is
-// recorded in the raw feed — the board filter runs in poster.ts.
-function extractPagerLine(raw: string): string | null {
-  // Format: "DISTRICT - STATION\nMessage: {pager line}"
+// Pull the pager line out of the Telegram wrapper, keeping the district/station
+// header as origin metadata for /raw. Everything extracted is recorded in the
+// raw feed — the board filter runs in poster.ts.
+//
+// Format: "DISTRICT - STATION\nMessage: {pager line}". The header is only
+// trusted when the "Message:" marker is actually present; without it the whole
+// text is the pager line and there's no header to read.
+function extractPagerLine(
+  raw: string,
+): { line: string; agency: string | null; origin: string | null } | null {
   const m = raw.match(/^Message:\s*(.+)$/m);
-  const line = m ? m[1].trim() : raw.trim();
-  return line || null;
+  if (!m) {
+    const line = raw.trim();
+    return line ? { line, agency: null, origin: null } : null;
+  }
+
+  const line = m[1].trim();
+  if (!line) return null;
+
+  const header = raw.slice(0, m.index ?? 0).trim().split(/\r?\n/)[0] ?? "";
+  const parts = header.split(/\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+  return {
+    line,
+    agency: parts[0] ?? null,
+    origin: parts.length > 1 ? parts.slice(1).join(" - ") : null,
+  };
 }
 
 export async function pollTelegram(post: PostFn): Promise<void> {
@@ -58,12 +77,17 @@ export async function pollTelegram(post: PostFn): Promise<void> {
     const lines: PagerLine[] = [...seed]
       .reverse() // oldest-first so ingest order is chronological
       .flatMap((m) => {
-        const raw = extractPagerLine((m.message as string | undefined) ?? "");
-        if (!raw) return [];
+        const parsed = extractPagerLine((m.message as string | undefined) ?? "");
+        if (!parsed) return [];
         const receivedAt = m.date
           ? new Date((m.date as number) * 1000).toISOString()
           : undefined;
-        return [{ raw, receivedAt }];
+        return [{
+          raw: parsed.line,
+          receivedAt,
+          agency: parsed.agency,
+          origin: parsed.origin,
+        }];
       });
 
     // Everything is recorded raw; only the newest 30 board-worthy lines are let
@@ -99,12 +123,17 @@ export async function pollTelegram(post: PostFn): Promise<void> {
       const lines: PagerLine[] = [...msgs]
         .reverse()
         .flatMap((m) => {
-          const raw = extractPagerLine((m.message as string | undefined) ?? "");
-          if (!raw) return [];
+          const parsed = extractPagerLine((m.message as string | undefined) ?? "");
+          if (!parsed) return [];
           const receivedAt = m.date
             ? new Date((m.date as number) * 1000).toISOString()
             : undefined;
-          return [{ raw, receivedAt }];
+          return [{
+            raw: parsed.line,
+            receivedAt,
+            agency: parsed.agency,
+            origin: parsed.origin,
+          }];
         });
 
       await post(lines, "telegram");

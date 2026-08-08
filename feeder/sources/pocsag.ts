@@ -7,6 +7,8 @@ interface PocsagMessage {
   message?: string;
   timestamp?: number; // Unix seconds
   agency?: string;
+  address?: string | number; // capcode
+  alias?: string | null;     // brigade/station name for that capcode
   ignore?: number | null;
 }
 
@@ -49,8 +51,16 @@ export async function pollPocsag(post: PostFn): Promise<void> {
     // text alone wouldn't give them away).
     const boardEligible = !msg.ignore && !/^SES$/i.test(msg.agency ?? "");
 
-    post([{ raw, receivedAt, boardEligible }], "pocsag").catch((err) =>
-      console.error("[pocsag]", err instanceof Error ? err.message : err),
-    );
+    post(
+      [{
+        raw,
+        receivedAt,
+        boardEligible,
+        capcode: msg.address != null ? String(msg.address) : null,
+        agency: msg.agency ?? null,
+        origin: msg.alias ?? null,
+      }],
+      "pocsag",
+    ).catch((err) => console.error("[pocsag]", err instanceof Error ? err.message : err));
   });
 }

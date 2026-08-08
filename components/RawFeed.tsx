@@ -30,11 +30,24 @@ function dateKey(iso: string): string {
   return `${y}-${m}-${day}`;
 }
 
-const STATUS_LABEL: Record<RawStatus, string> = {
-  incident: "On board",
-  standdown: "Stand-down",
-  dropped: "Dropped",
+// Only the exceptions get a tag. "On board" is the expected outcome for most
+// traffic, so badging every row with it is noise that buries the interesting
+// ones — the row's left accent bar carries that state instead.
+const STATUS_TAG: Partial<Record<RawStatus, string>> = {
+  standdown: "STAND DOWN",
+  dropped: "DROPPED",
 };
+
+/** "2m", "4h", "6d" — compact age, for the techno right-hand gutter. */
+function age(iso: string, now: number): string {
+  const secs = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
 
 // The filter chips. `null` = no status filter.
 const FILTERS: { key: string; label: string; status: RawStatus | null }[] = [
@@ -65,6 +78,15 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Drives the relative-age gutter. Starts null so the server and the first
+  // client render agree; ticks slowly because the column is coarse (m/h/d).
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const messagesRef = useRef<PagerMessage[]>([]);
   const loadingRef = useRef(false);
@@ -236,9 +258,17 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
           <span aria-hidden="true">←</span> Board
         </Link>
 
-        <div className="raw-title">Raw feed</div>
+        <div className="raw-title">
+          Raw feed
+          <span className="raw-sub">unfiltered pager traffic</span>
+        </div>
 
         <div className="topbar-spacer" />
+
+        <div className="raw-readout">
+          <span className="raw-readout-n">{messages.length.toLocaleString()}</span>
+          <span className="raw-readout-l">{hasMore ? "loaded" : "messages"}</span>
+        </div>
 
         <label className="search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -272,28 +302,48 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
         <table className="raw-table">
           <thead>
             <tr>
-              <th style={{ width: 60 }}>Time</th>
-              <th style={{ width: 110 }}>Status</th>
+              <th style={{ width: 62 }}>Time</th>
+              <th style={{ width: 82 }}>Capcode</th>
+              <th style={{ width: 130 }}>Agency</th>
+              <th style={{ width: 190 }}>Brigade</th>
               <th>Message</th>
-              <th style={{ width: 150 }}>Source</th>
+              <th style={{ width: 150 }}>Src</th>
             </tr>
           </thead>
           <tbody>
             {grouped.map(([date, rows]) => (
               <Fragment key={date}>
                 <tr className="date-row">
-                  <td colSpan={4}>{date}</td>
+                  <td colSpan={6}>{date}</td>
                 </tr>
                 {rows.map((m) => (
                   <tr key={m.hash} className={`data-row raw-row ${m.status}`}>
                     <td>
                       <span className="time-cell">{fmt(m.receivedAt)}</span>
+                      {now && <span className="raw-age">{age(m.receivedAt, now)}</span>}
                     </td>
                     <td>
-                      <span className={`raw-status ${m.status}`}>{STATUS_LABEL[m.status]}</span>
+                      {m.capcode
+                        ? <span className="capcode">{m.capcode}</span>
+                        : <span className="dim">·</span>}
                     </td>
                     <td>
-                      <div className="raw-line">{m.raw}</div>
+                      {m.agency
+                        ? <span className="agency-tag">{m.agency}</span>
+                        : <span className="dim">·</span>}
+                    </td>
+                    <td>
+                      {m.origin
+                        ? <span className="origin-cell">{m.origin}</span>
+                        : <span className="dim">·</span>}
+                    </td>
+                    <td>
+                      <div className="raw-line">
+                        {STATUS_TAG[m.status] && (
+                          <span className={`raw-status ${m.status}`}>{STATUS_TAG[m.status]}</span>
+                        )}
+                        {m.raw}
+                      </div>
                     </td>
                     <td>
                       <div className="cs-cell">
@@ -316,7 +366,7 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
             ))}
             {hasMore && (
               <tr ref={sentinelRef} className="load-sentinel">
-                <td colSpan={4}>{loadingMore ? "Loading earlier messages…" : ""}</td>
+                <td colSpan={6}>{loadingMore ? "Loading earlier messages…" : ""}</td>
               </tr>
             )}
           </tbody>

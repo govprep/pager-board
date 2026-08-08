@@ -11,6 +11,15 @@ export interface PagerLine {
   raw: string;
   receivedAt?: string; // ISO string — defaults to now() if omitted
   /**
+   * Where the page came from, when the source tells us. rfspager.app has
+   * Capcode/Agency/Brigade columns and PagerMon returns address/agency/alias —
+   * the same three fields under different names. Shown on /raw; for rows that
+   * lack them, lib/origin.ts recovers what it can from the line's own text.
+   */
+  capcode?: string | null;
+  agency?: string | null;
+  origin?: string | null;
+  /**
    * False when the source already knows this line can't become a board row —
    * currently only an rfspager row with no parseable time, which would scramble
    * the board's ordering. Such lines are still recorded in the raw feed.

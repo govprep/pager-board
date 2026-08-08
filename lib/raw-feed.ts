@@ -67,6 +67,17 @@ export interface RawEntry {
   receivedAt?: string;
   /** False when the source already knows this line can't reach the board. */
   boardEligible?: boolean;
+  /** Origin metadata, when the source supplies it. See lib/origin.ts. */
+  capcode?: string | null;
+  agency?: string | null;
+  origin?: string | null;
+}
+
+/** Trim to a stored value, collapsing blanks and placeholders to null. */
+function meta(v: string | null | undefined): string | null {
+  const s = (v ?? "").trim();
+  if (!s || s === "-" || s === "—") return null;
+  return s;
 }
 
 /**
@@ -92,6 +103,9 @@ export async function recordRawMessages(
         raw: normalizeRaw(e.raw),
         status,
         incident_no: incidentNo,
+        capcode: meta(e.capcode),
+        agency: meta(e.agency),
+        origin: meta(e.origin),
         source,
         received_at: e.receivedAt ?? new Date().toISOString(),
       };

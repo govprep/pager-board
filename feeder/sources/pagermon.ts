@@ -6,8 +6,9 @@ interface PagerMonMessage {
   message: string;
   source?: string;
   timestamp?: number;
-  alias?: string;
-  agency?: string;
+  address?: string;          // capcode
+  alias?: string | null;     // brigade/station name for that capcode
+  agency?: string | null;
   ignore?: number | null;
 }
 
@@ -25,6 +26,11 @@ function toLines(m: PagerMonMessage): PagerLine[] {
     raw,
     receivedAt: m.timestamp ? new Date(m.timestamp * 1000).toISOString() : undefined,
     boardEligible: !m.ignore,
+    // PagerMon's address/agency/alias are rfspager's Capcode/Agency/Brigade
+    // under different names — e.g. "0125111" / "FRNSW" / "251 Cardiff".
+    capcode: m.address ?? null,
+    agency: m.agency ?? null,
+    origin: m.alias ?? null,
   }];
 }
 

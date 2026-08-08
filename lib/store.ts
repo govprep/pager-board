@@ -3,6 +3,7 @@ import { parsePagerMessage, hasIncidentNumber } from "./parser";
 import { standDownIncidentNo } from "./standdown";
 import { passesBoardFilter } from "./filter";
 import { recordRawMessages } from "./raw-feed";
+import { withInferredOrigin } from "./origin";
 import { supabase } from "./supabase";
 
 // ---------------------------------------------------------------------------
@@ -145,12 +146,24 @@ async function applyStandDowns(incidentNos: string[]): Promise<void> {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toPagerMessage(row: any): PagerMessage {
+  // Rows backfilled from `incidents` carry no origin (it was never stored), so
+  // recover what the line itself gives away. Stored values always win.
+  const { agency, origin } = withInferredOrigin(row.raw ?? "", {
+    agency: row.agency ?? null,
+    origin: row.origin ?? null,
+  });
+
   return {
     hash: row.hash,
     raw: row.raw,
     status: (row.status ?? "dropped") as RawStatus,
     incidentNo: row.incident_no ?? null,
-    sources: row.sources ?? [],
+    capcode: row.capcode ?? null,
+    agency,
+    origin,
+    // "backfill" is a bookkeeping marker for rows reconstructed from the board,
+    // not somewhere a page actually came from — don't surface it as a source.
+    sources: (row.sources ?? []).filter((s: string) => s !== "backfill"),
     receivedAt: row.received_at,
     lastSeenAt: row.last_seen_at ?? row.received_at,
     seenCount: row.seen_count ?? 1,
@@ -184,7 +197,12 @@ export async function listPagerMessages({
 }: RawFeedQuery = {}): Promise<PagerMessage[]> {
   let query = supabase
     .from("pager_messages")
-    .select("hash, raw, status, incident_no, sources, received_at, last_seen_at, seen_count")
+    // `*` rather than a column list so this query keeps working against a
+    // database that hasn't had the latest schema.sql applied yet — a missing
+    // capcode/agency/origin column just reads as absent, and lib/origin.ts
+    // fills what it can. Naming them would 500 the whole page instead. Every
+    // column here is small except `raw`, which we need regardless.
+    .select("*")
     .order("received_at", { ascending: false })
     .order("hash", { ascending: false })
     .limit(limit);
