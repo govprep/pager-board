@@ -28,3 +28,36 @@ export interface Incident {
   /** When a STOP/STAND DOWN/NNTA message flagged this incident, else null. */
   stoppedAt: string | null;
 }
+
+/**
+ * What the ingest pipeline did with a raw pager line.
+ *   incident  — parsed into a numbered job and upserted onto the board
+ *   standdown — a STOP / STAND DOWN / NNTA that flagged an existing incident
+ *   dropped   — everything else: SES traffic, decode noise, test pages, and
+ *               number-less pages the board deliberately doesn't show
+ */
+export type RawStatus = "incident" | "standdown" | "dropped";
+
+/**
+ * One deduplicated line of the raw pager feed. Unlike `Incident`, this is every
+ * line every source saw — nothing is filtered out. Identical lines collapse into
+ * a single row (keyed by a hash of the whitespace-normalised text), so a page
+ * picked up by three sources is one row listing all three.
+ */
+export interface PagerMessage {
+  /** sha256 of the whitespace-normalised line — the dedup key. */
+  hash: string;
+  /** The line as it arrived (first copy seen wins). */
+  raw: string;
+  status: RawStatus;
+  /** The incident number the line refers to, when it carries one. */
+  incidentNo: string | null;
+  /** Every feeder source that has reported this line, e.g. ["pocsag","telegram"]. */
+  sources: string[];
+  /** Earliest known time for the message itself (not the time we stored it). */
+  receivedAt: string;
+  /** Most recent time a source re-reported this exact line. */
+  lastSeenAt: string;
+  /** How many times this exact line has been reported across all sources. */
+  seenCount: number;
+}

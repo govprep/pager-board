@@ -1,6 +1,8 @@
-import type { Incident } from "./types";
+import type { Incident, PagerMessage, RawStatus } from "./types";
 import { parsePagerMessage, hasIncidentNumber } from "./parser";
 import { standDownIncidentNo } from "./standdown";
+import { passesBoardFilter } from "./filter";
+import { recordRawMessages } from "./raw-feed";
 import { supabase } from "./supabase";
 
 // ---------------------------------------------------------------------------
@@ -74,7 +76,16 @@ export async function getIncident(id: string): Promise<Incident | undefined> {
  * upserted. Duplicate incident IDs are updated in place.
  */
 export async function addRawMessages(input: string | string[]): Promise<Incident[]> {
-  const lines = Array.isArray(input) ? input : [input];
+  let lines = Array.isArray(input) ? input : [input];
+
+  // The POST endpoint is a source like any other: record the unfiltered stream
+  // into the raw feed before the board filter runs.
+  await recordRawMessages(supabase, lines.map((raw) => ({ raw })), "api");
+
+  // Board filter — matches feeder/poster.ts so a line POSTed here is treated
+  // exactly as it would be arriving from a live source.
+  lines = lines.filter(passesBoardFilter);
+  if (lines.length === 0) return [];
 
   // Stand-down notices (STOP/STAND DOWN/NNTA) flag an existing incident rather
   // than being stored as a page of their own — pull them out first so they
@@ -125,6 +136,78 @@ async function applyStandDowns(incidentNos: string[]): Promise<void> {
     .update({ stopped_at: new Date().toISOString() })
     .in("incident_no", incidentNos);
   if (error) throw new Error(error.message);
+}
+
+// ---------------------------------------------------------------------------
+// Raw pager feed (`pager_messages`) — the unfiltered stream behind the board.
+// Written by lib/raw-feed.ts:recordRawMessages(); read here for /api/raw.
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toPagerMessage(row: any): PagerMessage {
+  return {
+    hash: row.hash,
+    raw: row.raw,
+    status: (row.status ?? "dropped") as RawStatus,
+    incidentNo: row.incident_no ?? null,
+    sources: row.sources ?? [],
+    receivedAt: row.received_at,
+    lastSeenAt: row.last_seen_at ?? row.received_at,
+    seenCount: row.seen_count ?? 1,
+  };
+}
+
+export interface RawFeedQuery {
+  limit?: number;
+  /** Keyset cursor: the (receivedAt, hash) of the oldest row you already have. */
+  before?: string;
+  beforeHash?: string;
+  /** Free-text match against the line itself. */
+  q?: string;
+  /** Restrict to one classification. */
+  status?: RawStatus;
+}
+
+/**
+ * A page of the raw feed, newest first. Same keyset scheme as listIncidents —
+ * fast at any depth, no duplicates or skips on tied timestamps.
+ *
+ * Search runs server-side (unlike the board's client-side filter) because this
+ * table holds everything, so a useful search has to reach past the loaded page.
+ */
+export async function listPagerMessages({
+  limit = 200,
+  before,
+  beforeHash,
+  q,
+  status,
+}: RawFeedQuery = {}): Promise<PagerMessage[]> {
+  let query = supabase
+    .from("pager_messages")
+    .select("hash, raw, status, incident_no, sources, received_at, last_seen_at, seen_count")
+    .order("received_at", { ascending: false })
+    .order("hash", { ascending: false })
+    .limit(limit);
+
+  if (status) query = query.eq("status", status);
+
+  if (q) {
+    // Drop the characters PostgREST uses to separate filter values, then escape
+    // LIKE's wildcards, so a search for "%" matches a literal % instead of
+    // everything and can't reshape the filter.
+    const safe = q.replace(/[\\,()]/g, " ").replace(/[%_]/g, "\\$&");
+    query = query.ilike("raw", `%${safe}%`);
+  }
+
+  if (before) {
+    query = beforeHash
+      ? query.or(`received_at.lt.${before},and(received_at.eq.${before},hash.lt.${beforeHash})`)
+      : query.lt("received_at", before);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(toPagerMessage);
 }
 
 /** Wipe all incidents. */

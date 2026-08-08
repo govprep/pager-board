@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import PagerBoard from "@/components/PagerBoard";
+import RawFeed from "@/components/RawFeed";
 
 const STORAGE_KEY = "belterhub.invite"; // this device's durable token
 const REFRESH_MS = 45 * 60 * 1000; // re-exchange before the 1h token expires
@@ -21,7 +22,12 @@ const RETRY_MS = 10 * 1000;        // quick retry after a transient error
 
 type Phase = "checking" | "need-code" | "revoked" | "authed";
 
-export default function AccessGate() {
+// Which screen to show once the device is authed. A plain string rather than a
+// render prop because the callers are server components, which can't hand a
+// function across the server/client boundary.
+type View = "board" | "raw";
+
+export default function AccessGate({ view = "board" }: { view?: View }) {
   const [phase, setPhase] = useState<Phase>("checking");
   const [codeInput, setCodeInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +144,9 @@ export default function AccessGate() {
 
   if (phase === "checking") return <div className="auth-screen" />;
   if (phase === "authed") {
-    return <PagerBoard getToken={() => accessRef.current} onSignOut={signOut} />;
+    return view === "raw"
+      ? <RawFeed getToken={() => accessRef.current} />
+      : <PagerBoard getToken={() => accessRef.current} onSignOut={signOut} />;
   }
 
   // need-code / revoked: the enrolment form.

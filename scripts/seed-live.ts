@@ -7,7 +7,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { isValidPagerLine } from "../feeder/filter";
+import { isValidPagerLine } from "../lib/filter";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -195,7 +195,16 @@ async function fetchTelegram(limit: number): Promise<string[]> {
 // ── board calls ───────────────────────────────────────────────────────────────
 
 async function clearBoard() {
-  const res = await fetch(`${BOARD}/api/incidents`, { method: "DELETE" });
+  // Wiping the board is admin-only — authenticate with the service role key
+  // (already in .env.local, which loadEnvLocal() pulled in above).
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!key) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY required in .env.local to clear the board");
+  }
+  const res = await fetch(`${BOARD}/api/incidents`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${key}` },
+  });
   if (!res.ok) throw new Error(`DELETE /api/incidents → HTTP ${res.status}`);
   const data = (await res.json()) as { cleared: boolean };
   if (!data.cleared) throw new Error("Board did not confirm clear");

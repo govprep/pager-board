@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import type { Incident } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
@@ -474,6 +475,14 @@ export default function PagerBoard({
             <button className="search-clear" onClick={() => setSearch("")}>×</button>
           )}
         </label>
+
+        <Link
+          className="raw-btn"
+          href="/raw"
+          title="Every pager line as it came over the air — including what the board filters out"
+        >
+          Raw feed
+        </Link>
 
         <EnableAlerts />
 

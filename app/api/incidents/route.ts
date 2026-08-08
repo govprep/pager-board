@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { listIncidents, addRawMessages, clearStore } from "@/lib/store";
 import { verifyAccessToken } from "@/lib/access";
@@ -11,6 +12,29 @@ async function isAuthed(req: Request): Promise<boolean> {
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!token) return false;
   return (await verifyAccessToken(token)) !== null;
+}
+
+/** Constant-time string compare — no early exit on the first differing byte. */
+function secretsMatch(a: string, b: string): boolean {
+  const ab = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+// True for an ADMIN request: one carrying the service role key.
+//
+// Deliberately stricter than isAuthed(). Wiping the board is an admin action,
+// and every enrolled member holds a valid access token — gating on that would
+// let any member destroy the board for everyone. This project has no HTTP admin
+// auth of its own; admin work (scripts/access.ts, the feeder) is done by holding
+// the service role key, so that's the credential this matches.
+function isAdmin(req: Request): boolean {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!key) return false; // never allow when the server has no secret configured
+  const auth = req.headers.get("authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  return token !== "" && secretsMatch(token, key);
 }
 
 // GET /api/incidents  -> a page of the board, newest first. Members only.
@@ -69,8 +93,17 @@ export async function POST(req: Request) {
   return NextResponse.json({ added }, { status: 201 });
 }
 
-// DELETE /api/incidents -> wipe the board.
-export async function DELETE() {
+// DELETE /api/incidents -> wipe the board. Admin only:
+//
+//   curl -X DELETE https://belter.cmssweb.com.au/api/incidents \
+//     -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"
+//
+// Leaves `pager_messages` alone — the raw feed is an append-only record of what
+// came over the air, so a board reset doesn't erase it.
+export async function DELETE(req: Request) {
+  if (!isAdmin(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   await clearStore();
   return NextResponse.json({ cleared: true });
 }

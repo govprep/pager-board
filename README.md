@@ -44,21 +44,50 @@ curl -X POST http://localhost:3000/api/incidents \
 Accepts `{ "message": "..." }`, `{ "messages": ["...", "..."] }`, or a
 plain-text body with one line per row.
 
+## The raw feed (`/raw`)
+
+The board is a *filtered* view: only numbered RFS/FRNSW jobs reach it. SES
+traffic, stand-downs, test pages and decode noise are all thrown away on the way
+in.
+
+`/raw` is the firehose behind it — every line every source saw, tagged with what
+the pipeline did with it (**on board** / **stand-down** / **dropped**), plus
+search and status filters. Reach it from the **Raw feed** button in the board's
+header.
+
+Lines are deduplicated by content, so one page picked up by pocsag, telegram and
+rfspager is a single row listing all three sources with a `×3` repeat count. The
+dedup key is a sha256 of the whitespace-normalised text — computed in
+`lib/raw-feed.ts` and, for the one-time backfill, in `supabase/schema.sql`. The
+two must stay in step or old rows stop deduplicating against new ones.
+
 ## Architecture / expansion points
 
 ```
 app/
-  page.tsx              server component, seeds initial board
+  page.tsx              server component, renders the access gate
+  raw/page.tsx          the raw feed, behind the same gate
   api/incidents/route.ts GET (list) + POST (ingest raw lines)
+  api/raw/route.ts      GET the raw feed (search + status filter, keyset paged)
 components/
+  AccessGate.tsx        per-device invite gate; picks board vs. raw feed
   PagerBoard.tsx        client UI: filtering, facets, live polling
+  RawFeed.tsx           client UI: the unfiltered stream
 lib/
-  types.ts              Incident shape (maps 1:1 to a Supabase table)
+  types.ts              Incident + PagerMessage shapes (map 1:1 to Supabase tables)
   parser.ts             raw pager line -> Incident (forgiving)
+  filter.ts             which lines are allowed onto the board
+  raw-feed.ts           normalise / hash / classify, and record the raw stream
   store.ts              ** data-source seam — the one file to change for Supabase **
   supabase.ts           step-by-step notes + table schema
   sample-data.ts        seed lines
 ```
+
+Ingestion runs in one place: sources hand `feeder/poster.ts` everything they see,
+it records the raw stream first, then applies the board filter. A source only
+overrides that by setting `boardEligible: false` on a line it knows can't be a
+board row (pocsag's `ignore` flag, SES agency traffic, an rfspager row with no
+usable timestamp) — such lines are still recorded, just never parsed.
 
 ### Moving to Supabase
 

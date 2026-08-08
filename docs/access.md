@@ -110,12 +110,13 @@ npm run access restore <id|label>  # turn it back on
 
 ## Files
 
-| Path | Role |
+| Path | Role |          
 |------|------|
 | `components/AccessGate.tsx` | gate: code-entry form, enrol, refresh session |
 | `app/api/enroll/route.ts` | code → device token (enforces the device cap) |
 | `app/api/session/route.ts` | device token → short-lived access JWT |
-| `app/api/incidents/route.ts` | members-only (verifies the access token) |
+| `app/api/incidents/route.ts` | GET members-only (verifies the access token); DELETE admin-only (service role key) |
+| `app/api/raw/route.ts` | the raw pager feed — members-only, same access token |
 | `lib/access.ts` | mint/verify access tokens (`jose`, `server-only`) |
 | `scripts/access.ts` | the `npm run access` admin CLI |
 | `supabase/schema.sql` | `members` + `member_devices` + `authenticated`-only RLS |

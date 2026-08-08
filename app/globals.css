@@ -580,6 +580,102 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   backdrop-filter: blur(6px);
 }
 
+/* ── raw feed (/raw) ─────────────────────────────────── */
+/* Board → raw feed, and back again. Same shape as .signout-btn so the topbar
+   reads as one row of controls. */
+.raw-btn,
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: none;
+}
+.raw-btn:hover,
+.back-btn:hover { border-color: var(--text-3); color: var(--text); }
+
+.raw-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  padding-left: 12px;
+  white-space: nowrap;
+}
+
+/* Status filter chips, directly under the topbar. */
+.raw-filters {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-2);
+  overflow-x: auto;
+  flex: none;
+}
+.chip {
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: none;
+}
+.chip:hover { border-color: var(--text-3); color: var(--text); }
+.chip.on {
+  background: var(--badge-bg);
+  border-color: rgba(255,255,255,0.3);
+  color: var(--text);
+}
+
+/* The line itself — monospace, wrapped, never truncated. This is the whole
+   point of the page, so it gets the room. */
+.raw-line {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* Rows the board never showed are dimmed, so the traffic that DID make it
+   through still reads at a glance. */
+.raw-row.dropped .raw-line { color: var(--text-2); }
+.raw-row.standdown { background: rgba(127, 29, 29, 0.10); }
+.raw-row.standdown:hover { background: rgba(127, 29, 29, 0.18); }
+
+.raw-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.raw-status.incident  { background: var(--tag-medical-bg); color: var(--tag-medical-text); }
+.raw-status.standdown { background: #7f1d1d; color: #fca5a5; }
+.raw-status.dropped   { background: var(--tag-default-bg); color: var(--tag-default-text); }
+
+/* "seen 4 times across all sources" */
+.seen-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
 /* ── mobile portrait ─────────────────────────────────── */
 @media (max-width: 600px) {
   /* Topbar: wrap so the search drops onto its own full-width row.
@@ -634,4 +730,15 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   .list-wrap tr.data-row td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
   /* Row 3: resources (full width, wrap left-to-right) */
   .list-wrap tr.data-row td:nth-child(5) { grid-column: 1 / -1; grid-row: 3; }
+
+  /* Raw feed cards: only 4 columns, and the message wants the full width, so
+     it overrides the incident-board placements above. */
+  .raw-title { padding-left: 0; }
+  .list-wrap tr.raw-row { grid-template-columns: auto auto 1fr; }
+  /* Row 1: time | status | sources (end) */
+  .list-wrap tr.raw-row td:nth-child(1) { grid-column: 1; grid-row: 1; align-self: center; }
+  .list-wrap tr.raw-row td:nth-child(2) { grid-column: 2; grid-row: 1; align-self: center; }
+  .list-wrap tr.raw-row td:nth-child(4) { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; }
+  /* Row 2: the line itself (full width) */
+  .list-wrap tr.raw-row td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
 }

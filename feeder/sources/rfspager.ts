@@ -1,8 +1,30 @@
 import type { PostFn, PagerLine } from "../poster";
-import { isValidPagerLine } from "../filter";
-import { standDownIncidentNo } from "../../lib/standdown";
+import { passesBoardFilter } from "../../lib/filter";
 
 const PAGE_URL = "https://rfspager.app/pager";
+
+// On startup the whole page is "new" to us. Everything is recorded in the raw
+// feed, but only this many board-worthy lines are allowed onto the board —
+// otherwise a first-ever run fires a Slack post and a phone push for every row
+// on the page.
+const SEED_BOARD_LIMIT = 30;
+
+/**
+ * Bar everything past the first `SEED_BOARD_LIMIT` board-worthy lines from the
+ * board. Junk doesn't count against the budget, so the board seeds with the
+ * same 30 incidents it always did — the rest is still recorded raw.
+ */
+function capBoardSeed(items: PagerLine[]): PagerLine[] {
+  let budget = SEED_BOARD_LIMIT;
+  return items.map((item) => {
+    if (item.boardEligible === false || !passesBoardFilter(item.raw)) return item;
+    if (budget > 0) {
+      budget--;
+      return item;
+    }
+    return { ...item, boardEligible: false };
+  });
+}
 const seen = new Set<string>();
 
 export async function pollRfsPager(post: PostFn): Promise<void> {
@@ -11,8 +33,8 @@ export async function pollRfsPager(post: PostFn): Promise<void> {
     if (res.ok) {
       const items = extractFromHtml(await res.text());
       items.forEach((item) => seen.add(item.raw));
-      if (items.length) await post(items.slice(0, 30), "rfspager");
-      console.log(`[rfspager] cursor seeded with ${seen.size} existing message(s), posted ${Math.min(items.length, 30)}`);
+      if (items.length) await post(capBoardSeed(items), "rfspager");
+      console.log(`[rfspager] cursor seeded with ${seen.size} existing message(s), posted ${items.length}`);
     }
   } catch {
     // non-fatal — worst case we re-post on first tick
@@ -90,10 +112,13 @@ function extractFromHtml(html: string): PagerLine[] {
     // Prefer the legacy in-message prefix (older rows); fall back to the row's
     // first <td>, where rfspager.app now puts the time for new-format rows.
     const receivedAt = parseDatePrefix(inner) ?? parseRowTime(row[0]);
-    // No usable time → skip rather than stamp now() and scramble the ordering.
-    if (!receivedAt) continue;
     const raw = inner.replace(DATE_PREFIX_RE, "").trim();
-    if (isValidPagerLine(raw) || standDownIncidentNo(raw)) lines.push({ raw, receivedAt });
+    if (!raw) continue;
+    // Every line goes through — the board filter now lives in poster.ts so the
+    // raw feed sees what the board rejects. A row with no usable time still
+    // gets recorded, but is barred from the board: stamping it now() would
+    // scramble the ordering.
+    lines.push({ raw, receivedAt, boardEligible: receivedAt != null });
   }
 
   return lines;

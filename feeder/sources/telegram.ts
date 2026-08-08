@@ -1,12 +1,13 @@
 import type { PostFn, PagerLine } from "../poster";
-import { isValidPagerLine } from "../filter";
-import { standDownIncidentNo } from "../../lib/standdown";
+import { passesBoardFilter } from "../../lib/filter";
 
+// Pull the pager line out of the Telegram wrapper. Everything extracted is
+// recorded in the raw feed — the board filter runs in poster.ts.
 function extractPagerLine(raw: string): string | null {
   // Format: "DISTRICT - STATION\nMessage: {pager line}"
   const m = raw.match(/^Message:\s*(.+)$/m);
   const line = m ? m[1].trim() : raw.trim();
-  return isValidPagerLine(line) || standDownIncidentNo(line) ? line : null;
+  return line || null;
 }
 
 export async function pollTelegram(post: PostFn): Promise<void> {
@@ -63,8 +64,17 @@ export async function pollTelegram(post: PostFn): Promise<void> {
           ? new Date((m.date as number) * 1000).toISOString()
           : undefined;
         return [{ raw, receivedAt }];
-      })
-      .slice(-30); // newest 30 valid messages
+      });
+
+    // Everything is recorded raw; only the newest 30 board-worthy lines are let
+    // onto the board, so a first-ever run doesn't fire a Slack post and a phone
+    // push for the whole backlog. Walk newest-first to spend the budget there.
+    let budget = 30;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!passesBoardFilter(lines[i].raw)) continue;
+      if (budget > 0) budget--;
+      else lines[i].boardEligible = false;
+    }
 
     if (lines.length) await post(lines, "telegram");
     console.log(`[telegram] cursor seeded at msg ${lastMsgId}, posted ${lines.length} recent message(s)`);

@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parsePagerMessage, hasIncidentNumber } from "../lib/parser";
 import { standDownIncidentNo } from "../lib/standdown";
+import { passesBoardFilter } from "../lib/filter";
+import { recordRawMessages } from "../lib/raw-feed";
 import type { Incident } from "../lib/types";
 import { postPending } from "./slack";
 import { pushPending } from "./push";
@@ -8,6 +10,13 @@ import { pushPending } from "./push";
 export interface PagerLine {
   raw: string;
   receivedAt?: string; // ISO string — defaults to now() if omitted
+  /**
+   * False when the source already knows this line can't become a board row —
+   * currently only an rfspager row with no parseable time, which would scramble
+   * the board's ordering. Such lines are still recorded in the raw feed.
+   * Defaults to true.
+   */
+  boardEligible?: boolean;
 }
 
 export type PostFn = (lines: PagerLine[], source: string) => Promise<void>;
@@ -31,6 +40,8 @@ export function makeWriter(): Writer {
     auth: { persistSession: false },
   });
 
+  // Wipes the board only. `pager_messages` is an append-only record of what came
+  // over the air, so a board reset deliberately leaves it intact.
   async function clear() {
     const { error } = await db.from("incidents").delete().neq("id", "");
     if (error) throw new Error(error.message);
@@ -40,6 +51,17 @@ export function makeWriter(): Writer {
   }
 
   async function write(lines: PagerLine[], source: string) {
+    if (!lines.length) return;
+
+    // Record the unfiltered stream FIRST — /raw shows everything that came over
+    // the air, including the lines the board deliberately throws away. Sources
+    // hand us their traffic unfiltered; the board filter runs below, after this.
+    await recordRawMessages(db, lines, source);
+
+    // Board filter. Until now this lived in each source; it sits here so the
+    // raw feed above sees the traffic the board rejects. A line earns a look
+    // from the parser only if it's structurally sound or is a stand-down.
+    lines = lines.filter((l) => l.boardEligible !== false && passesBoardFilter(l.raw));
     if (!lines.length) return;
 
     // Stand-down notices (STOP/STAND DOWN/NNTA) flag an existing incident

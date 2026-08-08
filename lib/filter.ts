@@ -1,4 +1,10 @@
-// Shared filter for pager message lines before they hit the board.
+// Shared filter deciding which pager lines are allowed onto the *board*.
+//
+// This is a board filter, not an ingest filter: every line a source sees is
+// recorded in the raw feed (see lib/raw-feed.ts) whether it passes here or not.
+// Rejection only means "don't try to parse this into an incident".
+
+import { standDownIncidentNo } from "./standdown";
 
 // Structured pager line patterns — any one match is sufficient.
 const STRUCT_RE = /\s-\s|[A-Z]{2,}:|(\[[-\d.,]+\])/;
@@ -29,4 +35,15 @@ export function isValidPagerLine(line: string): boolean {
   // Ignore SES messages entirely.
   if (/\bTURNOUT:\s*SE[A-Z0-9]+|INC:\s*SE[A-Z0-9]+\s+[A-Z]{2,}|^SE[A-Z0-9]+\s+[A-Z]{2,}/i.test(line)) return false;
   return true;
+}
+
+/**
+ * The full board gate: a line reaches the parser if it's structurally sound, or
+ * if it's a stand-down notice (which `isValidPagerLine` rejects on purpose —
+ * STOP/NNTA is junk as a page, but meaningful as a flag on an existing job).
+ *
+ * Single definition so feeder/poster.ts and the sources' startup caps agree.
+ */
+export function passesBoardFilter(line: string): boolean {
+  return isValidPagerLine(line) || standDownIncidentNo(line) !== null;
 }

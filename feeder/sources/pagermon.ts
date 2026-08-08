@@ -1,6 +1,5 @@
 import type { PostFn, PagerLine } from "../poster";
-import { isValidPagerLine } from "../filter";
-import { standDownIncidentNo } from "../../lib/standdown";
+import { passesBoardFilter } from "../../lib/filter";
 
 interface PagerMonMessage {
   id: number;
@@ -12,9 +11,21 @@ interface PagerMonMessage {
   ignore?: number | null;
 }
 
-function isUsable(m: PagerMonMessage): boolean {
-  if (m.ignore) return false;
-  return isValidPagerLine(m.message) || !!standDownIncidentNo(m.message);
+// Everything PagerMon reports is recorded in the raw feed; the board filter runs
+// in poster.ts. The one thing we still honour here is PagerMon's own `ignore`
+// flag — that's the operator having explicitly muted a capcode, so it's barred
+// from the board (but still shown raw).
+//
+// Returns [] for a message with no text — the API is external, and the board
+// filter that used to absorb that case no longer runs here.
+function toLines(m: PagerMonMessage): PagerLine[] {
+  const raw = typeof m.message === "string" ? m.message.trim() : "";
+  if (!raw) return [];
+  return [{
+    raw,
+    receivedAt: m.timestamp ? new Date(m.timestamp * 1000).toISOString() : undefined,
+    boardEligible: !m.ignore,
+  }];
 }
 
 interface PagerMonResponse {
@@ -76,13 +87,18 @@ export async function pollPagerMon(post: PostFn): Promise<void> {
     const seed = await getMessages(base, 0);
     if (seed.length) lastId = Math.max(...seed.map((m) => m.id ?? 0));
 
-    const toPost: PagerLine[] = seed
-      .filter(isUsable)
-      .slice(0, 30)
-      .map((m) => ({
-        raw: m.message.trim(),
-        receivedAt: m.timestamp ? new Date(m.timestamp * 1000).toISOString() : undefined,
-      }));
+    // Everything is recorded raw; only the 30 most recent board-worthy lines are
+    // allowed onto the board, so a first-ever run doesn't fire a Slack post and
+    // a phone push for the whole backlog.
+    let budget = 30;
+    const toPost: PagerLine[] = seed.flatMap(toLines).map((line) => {
+      if (!line.boardEligible || !passesBoardFilter(line.raw)) return line;
+      if (budget > 0) {
+        budget--;
+        return line;
+      }
+      return { ...line, boardEligible: false };
+    });
     if (toPost.length) await post(toPost, "pagermon");
 
     console.log(`[pagermon] cursor seeded at id ${lastId}, posted ${toPost.length} recent message(s)`);
@@ -107,16 +123,7 @@ export async function pollPagerMon(post: PostFn): Promise<void> {
       const maxId = Math.max(...messages.map((m) => m.id ?? 0));
       if (maxId >= lastId) lastId = maxId + 1;
 
-      const lines: PagerLine[] = messages
-        .filter(isUsable)
-        .map((m) => ({
-          raw: m.message.trim(),
-          receivedAt: m.timestamp
-            ? new Date(m.timestamp * 1000).toISOString()
-            : undefined,
-        }));
-
-      await post(lines, "pagermon");
+      await post(messages.flatMap(toLines), "pagermon");
     } catch (err) {
       console.error("[pagermon]", err instanceof Error ? err.message : err);
     }

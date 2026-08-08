@@ -1,6 +1,4 @@
 import type { PostFn } from "../poster";
-import { isValidPagerLine } from "../filter";
-import { standDownIncidentNo } from "../../lib/standdown";
 
 const BASE_URL = "https://pocsag.net";
 
@@ -36,18 +34,22 @@ export async function pollPocsag(post: PostFn): Promise<void> {
   // Each live page arrives as a "messagePost" event carrying one message object.
   socket.on("messagePost", (msg: PocsagMessage) => {
     if (!msg || typeof msg.message !== "string") return;
-    if (msg.ignore) return;
-    // Honour the project-wide rule: SES traffic is ignored entirely.
-    if (/^SES$/i.test(msg.agency ?? "")) return;
 
     const raw = msg.message.trim();
-    if (!isValidPagerLine(raw) && !standDownIncidentNo(raw)) return;
+    if (!raw) return;
 
     const receivedAt = msg.timestamp
       ? new Date(msg.timestamp * 1000).toISOString()
       : undefined;
 
-    post([{ raw, receivedAt }], "pocsag").catch((err) =>
+    // Everything pocsag.net emits is recorded in the raw feed — the board filter
+    // runs in poster.ts. Two source-specific rules still bar a line from the
+    // board: pocsag's own `ignore` flag, and the project-wide rule that SES
+    // traffic never reaches the board (the agency field catches SES pages whose
+    // text alone wouldn't give them away).
+    const boardEligible = !msg.ignore && !/^SES$/i.test(msg.agency ?? "");
+
+    post([{ raw, receivedAt, boardEligible }], "pocsag").catch((err) =>
       console.error("[pocsag]", err instanceof Error ? err.message : err),
     );
   });

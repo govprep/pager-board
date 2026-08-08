@@ -27,6 +27,10 @@ alter table public.incidents enable row level security;
 -- earlier schema, drop it first:  drop policy if exists "allow_anon_read" on public.incidents;
 drop policy if exists "allow_anon_read" on public.incidents;
 
+-- Dropped first so re-running this file replaces the policy instead of erroring
+-- with "policy already exists".
+drop policy if exists "allow_authenticated_read" on public.incidents;
+
 create policy "allow_authenticated_read"
   on public.incidents for select
   to authenticated
@@ -34,8 +38,15 @@ create policy "allow_authenticated_read"
 
 -- Enable Realtime on this table so the browser client gets instant pushes.
 -- (In the Supabase dashboard: Table Editor → incidents → Realtime toggle ON)
--- Or via SQL:
-alter publication supabase_realtime add table public.incidents;
+-- Or via SQL. Wrapped so re-running this file is a no-op instead of erroring
+-- with "relation is already member of publication" (42710).
+do $$
+begin
+  alter publication supabase_realtime add table public.incidents;
+exception
+  when duplicate_object then null;  -- already published
+end
+$$;
 
 -- ── Slack bot ────────────────────────────────────────────────────────────────
 -- Marks when a page was posted to Slack. NULL = not yet posted; the feeder's
@@ -162,3 +173,133 @@ create index if not exists incident_subscriptions_incident_no_idx
 
 alter table public.incident_subscriptions enable row level security;
 -- No anon policies: only the service role (API routes + feeder) touches this.
+
+-- ── Raw pager feed ───────────────────────────────────────────────────────────
+-- Every line every source sees, BEFORE the board filter. `incidents` is a
+-- heavily filtered view (numbered RFS/FRNSW jobs only); this table is the
+-- firehose behind it — SES traffic, decode noise, test pages, stand-downs and
+-- number-less pages all land here, tagged with what the pipeline did with them.
+-- Powers the /raw page.
+--
+-- Deduplicated by content: `hash` is sha256 of the whitespace-normalised line,
+-- so the same page arriving from pocsag + telegram + rfspager is ONE row
+-- listing all three sources, with seen_count counting the repeats.
+create table if not exists public.pager_messages (
+  hash          text        primary key,               -- sha256(normalised raw)
+  raw           text        not null,                  -- normalised line as it arrived
+  status        text        not null default 'dropped', -- incident | standdown | dropped
+  incident_no   text,                                  -- when the line carries one
+  sources       text[]      not null default '{}',     -- every feeder that reported it
+  received_at   timestamptz not null default now(),    -- earliest known message time
+  first_seen_at timestamptz not null default now(),    -- when we first recorded it
+  last_seen_at  timestamptz not null default now(),    -- most recent re-report
+  seen_count    int         not null default 1
+);
+
+-- Keyset pagination order for /raw (newest first, hash as the tiebreaker).
+create index if not exists pager_messages_received_at_idx
+  on public.pager_messages (received_at desc, hash desc);
+
+-- Status filter chips on /raw.
+create index if not exists pager_messages_status_idx
+  on public.pager_messages (status);
+
+-- Members-only, exactly like incidents: reads require a verified session, and
+-- writes come from the service role (feeder + API routes), which bypasses RLS.
+alter table public.pager_messages enable row level security;
+
+drop policy if exists "allow_authenticated_read_raw" on public.pager_messages;
+create policy "allow_authenticated_read_raw"
+  on public.pager_messages for select
+  to authenticated
+  using (true);
+
+-- Live pushes to /raw, same as the board gets.
+do $$
+begin
+  alter publication supabase_realtime add table public.pager_messages;
+exception
+  when duplicate_object then null;  -- already published
+end
+$$;
+
+-- Upsert a batch of raw lines, merging duplicates instead of inserting them
+-- twice. Called by lib/raw-feed.ts:recordRawMessages().
+--
+-- The batch is grouped by hash first, because ON CONFLICT DO UPDATE cannot
+-- touch the same row twice in one statement (a batch legitimately contains the
+-- same line more than once). On conflict we keep the EARLIEST received_at (the
+-- message's real time), extend last_seen_at, union the sources, and let a later
+-- 'incident' classification win over an earlier 'dropped' one.
+create or replace function public.record_pager_messages(payload jsonb)
+returns void
+language sql
+as $$
+  insert into public.pager_messages
+    (hash, raw, status, incident_no, sources, received_at, first_seen_at, last_seen_at, seen_count)
+  select
+    t.hash,
+    min(t.raw),          -- identical within a hash group (raw is normalised)
+    max(t.status),       -- text order happens to rank standdown > incident > dropped
+    min(t.incident_no),  -- aggregates skip NULLs, so a number wins over none
+    array_agg(distinct t.source),
+    min(t.received_at),
+    now(),
+    max(t.received_at),
+    count(*)::int
+  from (
+    select
+      m ->> 'hash'        as hash,
+      m ->> 'raw'         as raw,
+      m ->> 'status'      as status,
+      m ->> 'incident_no' as incident_no,
+      m ->> 'source'      as source,
+      coalesce((m ->> 'received_at')::timestamptz, now()) as received_at
+    from jsonb_array_elements(payload) as m
+  ) t
+  where t.hash is not null and t.raw is not null
+  group by t.hash
+  on conflict (hash) do update set
+    seen_count   = pager_messages.seen_count + excluded.seen_count,
+    last_seen_at = greatest(pager_messages.last_seen_at, excluded.last_seen_at),
+    received_at  = least(pager_messages.received_at, excluded.received_at),
+    incident_no  = coalesce(pager_messages.incident_no, excluded.incident_no),
+    sources      = (
+      select array_agg(distinct s)
+      from unnest(pager_messages.sources || excluded.sources) as s
+    ),
+    status       = case
+                     when pager_messages.status = 'dropped' then excluded.status
+                     else pager_messages.status
+                   end;
+$$;
+
+-- Only the feeder and the API routes (service role) may write the raw feed.
+-- Without this, EXECUTE defaults to PUBLIC and any enrolled member could inject
+-- rows through PostgREST's RPC endpoint.
+revoke all on function public.record_pager_messages(jsonb) from public;
+grant execute on function public.record_pager_messages(jsonb) to service_role;
+
+-- One-time backfill so /raw isn't empty on the day this ships. Everything
+-- already on the board is, by definition, a line that came over the air — we
+-- just no longer have the lines that were filtered out before this table
+-- existed. Those only start accumulating once the new feeder runs.
+--
+-- The hash expression here MUST match normalizeRaw()/rawHash() in
+-- lib/raw-feed.ts, or backfilled rows won't dedupe against live ones.
+insert into public.pager_messages
+  (hash, raw, status, incident_no, sources, received_at, first_seen_at, last_seen_at, seen_count)
+select
+  encode(sha256(convert_to(btrim(regexp_replace(i.raw, '\s+', ' ', 'g')), 'UTF8')), 'hex'),
+  btrim(regexp_replace(min(i.raw), '\s+', ' ', 'g')),
+  'incident',
+  min(i.incident_no),
+  array['backfill'],
+  min(i.received_at),
+  now(),
+  max(i.received_at),
+  count(*)::int
+from public.incidents i
+where btrim(coalesce(i.raw, '')) <> ''
+group by encode(sha256(convert_to(btrim(regexp_replace(i.raw, '\s+', ' ', 'g')), 'UTF8')), 'hex')
+on conflict (hash) do nothing;
