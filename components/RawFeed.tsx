@@ -347,9 +347,9 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
                     </td>
                     <td>
                       <div className="cs-cell">
-                        {m.sources.map((s) => (
-                          <span key={s} className="badge">{s}</span>
-                        ))}
+                        {m.sources.length > 0
+                          ? m.sources.map((s) => <span key={s} className="badge">{s}</span>)
+                          : <span className="dim" title="Reconstructed from the board — predates the raw feed">·</span>}
                         {m.seenCount > 1 && (
                           <span
                             className="seen-count"

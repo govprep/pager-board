@@ -27,8 +27,29 @@ const FRNSW_TURNOUT_RE = /\bTURNOUT:\s*([\d\s]+?)(?=\s+(?:LOC|INC):|\s*$)/i;
 //   "LHFINBA7 - 26-123357 - …"           -> LHFINBA7
 //   "2 STSUTTO - 26-118273 - …"          -> STSUTTO   (2 = alarm level)
 //   "06:45:34 CMHORPA1A - 26-123354 - …" -> CMHORPA1A
+//
+// The incident number in the second field is required, and is what stops the
+// pattern eating the first word of a free-text page — without it,
+// "ALERT - STAND DOWN - NR - THANK YOU" yields a brigade called "ALERT".
+// Genuine stand-downs that name their incident ("1 STSUTTO - 26-118273 - STOP
+// - …") still match, because their second field is a real number.
 const RFS_CODE_RE =
-  /^(?:\d{1,2}:\d{2}(?::\d{2})?\s+)?(?:\d+\s+)?([A-Z][A-Z0-9./]{3,})\s+-\s+/;
+  /^(?:\d{1,2}:\d{2}(?::\d{2})?\s+)?(?:\d+\s+)?([A-Z][A-Z0-9./]{3,})\s+-\s+\d{1,4}-\d{3,}\s+-\s+/;
+
+// Two-letter prefix on an RFS station code identifies the district, which is
+// also the agency the page was issued under ("LHSALAS7" -> Lower Hunter).
+//
+// Only pairs actually observed on the live feeds are listed — every entry here
+// was read off a real message alongside its source-reported Agency column, not
+// guessed from a district list. Unknown prefixes stay blank rather than invent
+// a name. New rows get their agency from the source directly; this only fills
+// in history recorded before that was captured.
+const RFS_DISTRICTS: Record<string, string> = {
+  CC: "Central Coast",
+  HK: "Hornsby/Ku-Ring-Gai",
+  LH: "Lower Hunter",
+  SH: "Southern Highlands",
+};
 
 /**
  * Best-effort agency/brigade for a raw line, used only when the source didn't
@@ -48,9 +69,12 @@ export function inferOrigin(raw: string): Origin {
   }
   if (/^FRINC\b/i.test(line)) return { agency: "FRNSW", origin: null };
 
-  // RFS: the leading station code is all we can recover without a brigade table.
+  // RFS: the leading station code, plus the district its prefix names.
   const rfs = line.match(RFS_CODE_RE);
-  if (rfs) return { agency: null, origin: rfs[1] };
+  if (rfs) {
+    const code = rfs[1];
+    return { agency: RFS_DISTRICTS[code.slice(0, 2)] ?? null, origin: code };
+  }
 
   return { agency: null, origin: null };
 }
