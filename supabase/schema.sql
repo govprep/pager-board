@@ -183,6 +183,19 @@ create index if not exists push_subscriptions_device_key_idx
 alter table public.push_subscriptions
   add column if not exists prefs_set_at timestamptz;
 
+-- Adding that column leaves it null on every existing row, including devices
+-- that plainly did choose — they just chose before there was anywhere to record
+-- it, and would be told to pick areas they had already picked. A row can only
+-- have got off the alert_all default, or acquired a list, through the picker,
+-- so treat that as the choice it was. Devices still on "everything" with both
+-- lists empty are the genuinely unasked ones and stay null.
+update public.push_subscriptions
+   set prefs_set_at = created_at
+ where prefs_set_at is null
+   and (alert_all = false
+        or coalesce(array_length(lgas, 1), 0) > 0
+        or coalesce(array_length(stations, 1), 0) > 0);
+
 -- ── Stand-down flags ─────────────────────────────────────────────────────────
 -- Set when a STOP / STAND DOWN / NNTA message arrives referencing this incident
 -- number (see lib/standdown.ts). NULL = not stood down. Stamped on every row

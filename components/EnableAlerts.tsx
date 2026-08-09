@@ -46,7 +46,17 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
     navigator.serviceWorker.getRegistration().then(async (reg) => {
       const sub = reg && (await reg.pushManager.getSubscription());
       setState(sub ? "subscribed" : "prompt");
-      if (sub) void offerPicker();
+      if (!sub) return;
+      // Re-announce a subscription we already hold. It's the only moment a
+      // device that enrolled long ago says who it is, so it's where a stale twin
+      // left behind by a rotated endpoint gets found and retired — waiting for
+      // the user to save preferences would leave the old row pushing for weeks.
+      // Idempotent: permission is already granted and the subscription is
+      // reused, so nothing prompts.
+      await ensureSubscribed();
+      // After the reconcile, so a device that inherits the areas it picked on a
+      // previous endpoint isn't asked to pick them again.
+      await offerPicker();
     });
   }, []);
 
