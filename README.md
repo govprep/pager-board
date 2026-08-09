@@ -89,9 +89,23 @@ Two things follow from the data, both worth knowing:
 
 LGA names are matched on a normalised key (case, punctuation and council-type
 suffixes removed), so `QUEANBEYAN PALERANG`, `Queanbeyan-Palerang Regional` and
-`LAKE MACQUARIE CITY` all match the way you'd expect. The picker offers the LGAs
-actually present on the loaded board, so the spelling always matches what comes
-over the air; anything else can be typed in.
+`LAKE MACQUARIE CITY` all match the way you'd expect. Anything not listed can
+still be typed in.
+
+The picker's options are the 71 areas in `lib/nsw-lgas.ts` — every LGA the feed
+has ever paged, harvested from the full PagerMon archive (71,100 messages, of
+which 40,157 carried an address) — merged with whatever is on the loaded board,
+which contributes the live counts and always wins on spelling. Without the seed
+the picker would only ever offer wherever happened to be busy at the time.
+
+That harvest also turned up spellings the feed emits that aren't the real name —
+`PORT MACQUARIE COUNCIL` (144 pages), `CAMPELLTOWN CITY` (37) — so `LGA_ALIASES`
+folds them onto the right area and a subscriber doesn't quietly miss them. One-off
+decode truncations (`ERANG`, `WAREE`) are left alone rather than guessed at.
+
+To refresh the list, sweep PagerMon's `/api/messages` with `limit=100&page=N`
+and run each message through `lgaFromLocation()`. Note `since` only walks
+*forward* from the newest message, so it can't page back through history.
 
 The FRNSW station list (`lib/frnsw-stations.ts`) is the full 335-station index
 from [fire.nsw.gov.au](https://www.fire.nsw.gov.au/contact/contact-details/locations/station-index),
@@ -135,6 +149,7 @@ lib/
   parser.ts             raw pager line -> Incident (forgiving)
   filter.ts             which lines are allowed onto the board
   lga.ts                pull the LGA out of an RFS address, and normalise it
+  nsw-lgas.ts           every LGA the feed has paged, + its misspellings
   alert-prefs.ts        who gets pushed what — shared by the API and the feeder
   raw-feed.ts           normalise / hash / classify, and record the raw stream
   store.ts              ** data-source seam — the one file to change for Supabase **

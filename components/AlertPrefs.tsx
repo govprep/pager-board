@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getAlertPrefs, saveAlertPrefs } from "@/lib/push-client";
 import { DEFAULT_PREFS, type AlertPrefs } from "@/lib/alert-prefs";
 import { lgaKey } from "@/lib/lga";
+import { KNOWN_LGAS } from "@/lib/nsw-lgas";
 import { allFrnswStations, frnswStationName, turnoutKey } from "@/lib/frnsw-stations";
 
 // Picks which incidents this phone gets buzzed for.
@@ -91,13 +92,29 @@ export default function AlertPrefsModal({
     else setError("Couldn't save — check notifications are enabled for this device.");
   }
 
-  // Suggestions the board has actually seen, minus what's already picked.
+  // Every area we can offer: the ones on the loaded board (which carry a live
+  // count) merged over every area the feed has ever paged. Without the seed the
+  // picker would only ever show wherever happens to be busy right now.
+  const allLgas = useMemo(() => {
+    const byKey = new Map<string, { name: string; count: number }>();
+    for (const s of KNOWN_LGAS) byKey.set(lgaKey(s.name), { name: s.name, count: 0 });
+    for (const o of lgaOptions) {
+      const k = lgaKey(o.name);
+      // The board's spelling wins — it's what's arriving right now.
+      byKey.set(k, { name: o.name, count: o.count });
+    }
+    return [...byKey.values()].sort(
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+    );
+  }, [lgaOptions]);
+
+  // Suggestions, minus what's already picked.
   const lgaMatches = useMemo(() => {
     const q = lgaQuery.trim().toUpperCase();
-    return lgaOptions.filter(
+    return allLgas.filter(
       (o) => !selectedLgaKeys.has(lgaKey(o.name)) && (!q || o.name.includes(q)),
     );
-  }, [lgaOptions, lgaQuery, selectedLgaKeys]);
+  }, [allLgas, lgaQuery, selectedLgaKeys]);
 
   // Station search matches on number or name, so "428" and "QUEAN" both work.
   const stationMatches = useMemo(() => {
@@ -195,7 +212,7 @@ export default function AlertPrefsModal({
                       disabled={!narrowed}
                     >
                       <span>{o.name}</span>
-                      <span className="prefs-count">{o.count}</span>
+                      {o.count > 0 && <span className="prefs-count">{o.count}</span>}
                     </button>
                   ))}
                   {lgaQuery.trim() && !lgaMatches.length && (
@@ -209,8 +226,8 @@ export default function AlertPrefsModal({
                   )}
                 </div>
                 <span className="prefs-note">
-                  Areas seen on the board, with how many loaded incidents each has.
-                  Not listed? Type it and press Enter.
+                  Every area this feed has paged. The number is how many loaded
+                  incidents are there now. Not listed? Type it and press Enter.
                 </span>
               </div>
 

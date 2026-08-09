@@ -17,6 +17,8 @@
 //   "LAKE MACQUARIE CITY"  ==  "Lake Macquarie"
 //   "MOIRA SHIRE COUNCIL"  ==  "Moira"
 
+import { LGA_ALIASES } from "./nsw-lgas";
+
 const STATE_SEGMENT_RE = /\((?:NSW|ACT|VIC|QLD|SA|NT|TAS|WA)\)/i;
 
 // Generic council-type suffixes, stripped from the end of a name before
@@ -56,7 +58,11 @@ export function lgaKey(name: string): string {
   // Drop trailing generic words, but never the last remaining token — otherwise
   // an LGA legitimately named "City" style would normalise away to nothing.
   while (tokens.length > 1 && SUFFIXES.has(tokens[tokens.length - 1])) tokens.pop();
-  return tokens.join(" ");
+
+  // Fold the feed's recurring misspellings onto the real area, so a device
+  // watching Campbelltown still hears about pages that say "CAMPELLTOWN".
+  const key = tokens.join(" ");
+  return LGA_ALIASES[key] ?? key;
 }
 
 /** The LGA match key for a location, or "" when it carries no LGA. */
