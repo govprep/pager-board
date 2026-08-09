@@ -1,4 +1,4 @@
-import { frnswTurnoutLabel } from "./frnsw-stations";
+import { frnswTurnoutLabel, frnswTurnouts } from "./frnsw-stations";
 
 // Where a pager message came from.
 //
@@ -17,9 +17,6 @@ export interface Origin {
   /** Responding brigade/station, e.g. "428 QUEANBEYAN" or "LHFINBA7". */
   origin: string | null;
 }
-
-// FRNSW pages are "FRINC TYPE: <type> TURNOUT: <num> [<num> …] INC: <no>".
-const FRNSW_TURNOUT_RE = /\bTURNOUT:\s*([\d\s]+?)(?=\s+(?:LOC|INC):|\s*$)/i;
 
 // RFS positional pages are "{alarmLevel} {stationCode} - {incidentNo} - …", and
 // some sources prefix a clock time on top of that. Both are optional, so skip
@@ -61,12 +58,8 @@ export function inferOrigin(raw: string): Origin {
   if (!line) return { agency: null, origin: null };
 
   // FRNSW: expand the turnout number(s) into station names where we know them.
-  const turnout = line.match(FRNSW_TURNOUT_RE);
-  if (turnout) {
-    const nums = turnout[1].trim().split(/\s+/).filter(Boolean);
-    const labels = nums.map(frnswTurnoutLabel).filter(Boolean);
-    if (labels.length) return { agency: "FRNSW", origin: labels.join(", ") };
-  }
+  const labels = frnswTurnouts(line).map(frnswTurnoutLabel).filter(Boolean);
+  if (labels.length) return { agency: "FRNSW", origin: labels.join(", ") };
   if (/^FRINC\b/i.test(line)) return { agency: "FRNSW", origin: null };
 
   // RFS: the leading station code, plus the district its prefix names.

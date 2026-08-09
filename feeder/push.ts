@@ -1,17 +1,27 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import webpush from "web-push";
 import type { Incident } from "../lib/types";
+import {
+  alertKeysFor,
+  mergeAlertKeys,
+  wantsIncident,
+  type AlertPrefs,
+} from "../lib/alert-prefs";
 import { friendlyType } from "./type-names";
 
 // Sends web-push notifications to subscribed phones. Two kinds of alert:
 //
-//  • New incident → goes to every subscribed device. The body is tailored per
-//    agency: RFS pages show the type + address; FRNSW pages (marked "FRINC")
-//    show the type + the initial responding station.
+//  • New incident → goes to every device whose area preferences match (by RFS
+//    LGA or FRNSW station — see lib/alert-prefs.ts). Devices that haven't
+//    narrowed anything have alert_all set and still get everything. The body is
+//    tailored per agency: RFS pages show the type + address; FRNSW pages
+//    (marked "FRINC") show the type + the initial responding station.
 //
 //  • Unit added → goes only to devices following that incident (from the
 //    incident modal). Fires when a new unit page arrives for an incident number
-//    we've already seen, e.g. "CMEASCR1 was added to RINGWOOD RD".
+//    we've already seen, e.g. "CMEASCR1 was added to RINGWOOD RD". Area
+//    preferences deliberately don't apply here: following one job is an explicit
+//    opt-in, and it's usually a job outside your own patch that you're watching.
 //
 // Self-filters to pages not yet pushed via incidents.pushed_at, so re-upserts of
 // unchanged rows cost nothing and restarts never double-notify. Multiple unit
@@ -77,6 +87,25 @@ interface DbSubscription {
   endpoint: string;
   p256dh: string;
   auth: string;
+}
+
+// A subscription plus the areas that device asked for.
+type SubWithPrefs = DbSubscription & { prefs: AlertPrefs };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToSub(row: any): SubWithPrefs {
+  return {
+    endpoint: row.endpoint,
+    p256dh: row.p256dh,
+    auth: row.auth,
+    prefs: {
+      // A database without the preference columns reads as "everything", which
+      // is what it was doing before they existed.
+      alertAll: row.alert_all ?? true,
+      lgas: row.lgas ?? [],
+      stations: row.stations ?? [],
+    },
+  };
 }
 
 async function sendTo(subs: DbSubscription[], payload: string, dead: string[]): Promise<void> {
@@ -153,21 +182,22 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
     else for (const r of prior ?? []) known.add(r.incident_no);
   }
 
-  // Global subscribers (every device) — only needed for new-incident alerts.
+  // Every device plus its area preferences — only needed for new-incident
+  // alerts, which are then narrowed per group below. Selecting "*" keeps this
+  // working against a database that predates the preference columns.
   const newGroups = [...groups.values()].filter((g) => !(g.incidentNo && known.has(g.incidentNo)));
-  let globalSubs: DbSubscription[] = [];
+  let allSubs: SubWithPrefs[] = [];
   if (newGroups.length) {
-    const { data: subs, error: subErr } = await db
-      .from("push_subscriptions")
-      .select("endpoint, p256dh, auth");
+    const { data: subs, error: subErr } = await db.from("push_subscriptions").select("*");
     if (subErr) console.error("[push] fetch subscriptions:", subErr.message);
-    else globalSubs = (subs as DbSubscription[]) ?? [];
+    else allSubs = (subs ?? []).map(rowToSub);
   }
 
   const handled: string[] = [];
   const dead: string[] = []; // endpoints the push service has retired
   let newCount = 0;
   let updateCount = 0;
+  let skippedCount = 0; // new incidents nobody's preferences asked for
 
   for (const g of groups.values()) {
     const { inc } = g;
@@ -210,10 +240,18 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
       await sendTo((subs as DbSubscription[]) ?? [], payload, dead);
       updateCount++;
     } else {
-      // New incident → notify everyone. FRNSW folds the initial station into the
-      // type line; both agencies show the address in the body.
+      // New incident → notify the devices whose areas it falls in. The match
+      // keys come from every page of the group, so a job paged to several FRNSW
+      // stations reaches anyone watching any of them.
       newCount++;
-      if (!globalSubs.length) continue;
+      if (!allSubs.length) continue;
+
+      const keys = mergeAlertKeys(g.incs.map((i) => alertKeysFor(i.location, i.raw)));
+      const recipients = allSubs.filter((s) => wantsIncident(s.prefs, keys));
+      if (!recipients.length) {
+        skippedCount++;
+        continue;
+      }
 
       const title =
         isFrnsw(inc) && inc.unit
@@ -226,7 +264,7 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
         url: boardUrl(inc.incidentNo),
         tag: groupKey(inc),
       });
-      await sendTo(globalSubs, payload, dead);
+      await sendTo(recipients, payload, dead);
     }
   }
 
@@ -240,6 +278,10 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
       .update({ pushed_at: new Date().toISOString() })
       .in("id", handled);
     if (upErr) console.error("[push] mark pushed:", upErr.message);
-    else console.log(`[push] ${newCount} new, ${updateCount} update(s)`);
+    else
+      console.log(
+        `[push] ${newCount} new, ${updateCount} update(s)` +
+          (skippedCount ? `, ${skippedCount} outside everyone's areas` : ""),
+      );
   }
 }

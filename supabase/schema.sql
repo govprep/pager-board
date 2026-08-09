@@ -149,6 +149,21 @@ create table if not exists public.push_subscriptions (
 alter table public.push_subscriptions enable row level security;
 -- No anon policies: only the service role (API routes + feeder) touches this.
 
+-- Per-device notification preferences (see lib/alert-prefs.ts). Two independent,
+-- OR'd lists, because the agencies page differently: RFS pages carry an address
+-- whose LGA we match, FRNSW pages carry only a turnout number.
+--   alert_all — true (the default) means every incident, ignoring both lists, so
+--               devices subscribed before this shipped keep behaving as they did.
+--   lgas      — LGA names as picked, e.g. {WINGECARRIBEE,"CENTRAL COAST"}.
+--               Compared on a normalised key, so spelling variants still match.
+--   stations  — FRNSW turnout numbers, leading zeros stripped, e.g. {428,385}.
+alter table public.push_subscriptions
+  add column if not exists alert_all boolean not null default true;
+alter table public.push_subscriptions
+  add column if not exists lgas      text[]  not null default '{}';
+alter table public.push_subscriptions
+  add column if not exists stations  text[]  not null default '{}';
+
 -- ── Stand-down flags ─────────────────────────────────────────────────────────
 -- Set when a STOP / STAND DOWN / NNTA message arrives referencing this incident
 -- number (see lib/standdown.ts). NULL = not stood down. Stamped on every row

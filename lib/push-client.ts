@@ -5,6 +5,8 @@
 // topbar toggle) and the incident modal's "Follow updates" button so the
 // subscribe flow lives in one place.
 
+import { DEFAULT_PREFS, type AlertPrefs } from "./alert-prefs";
+
 // The VAPID public key is safe to ship to the client; the private key stays on
 // the feeder. Without it there's nothing to subscribe against.
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
@@ -68,6 +70,35 @@ export async function ensureSubscribed(): Promise<string | null> {
     body: JSON.stringify(sub.toJSON()),
   });
   return res.ok ? sub.endpoint : null;
+}
+
+/**
+ * This device's area preferences. Returns the defaults ("everything") when the
+ * device isn't subscribed or the request fails, so the modal always has
+ * something sane to render.
+ */
+export async function getAlertPrefs(): Promise<AlertPrefs> {
+  const endpoint = await currentEndpoint();
+  if (!endpoint) return DEFAULT_PREFS;
+  const res = await fetch(`/api/push/prefs?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) return DEFAULT_PREFS;
+  const data = await res.json();
+  return data.prefs ?? DEFAULT_PREFS;
+}
+
+/**
+ * Save this device's area preferences. Subscribes first if needed, so the user
+ * can pick their areas and be enrolled in one go. Returns true on success.
+ */
+export async function saveAlertPrefs(prefs: AlertPrefs): Promise<boolean> {
+  const endpoint = await ensureSubscribed();
+  if (!endpoint) return false;
+  const res = await fetch("/api/push/prefs", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint, ...prefs }),
+  });
+  return res.ok;
 }
 
 /** Whether this device is following unit-added updates for the given incident. */

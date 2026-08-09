@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { Incident } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
+import { lgaFromLocation, lgaKey } from "@/lib/lga";
 import EnableAlerts from "@/components/EnableAlerts";
 import IncidentMap from "@/components/IncidentMap";
 import { pushSupported, isFollowing, followIncident, unfollowIncident } from "@/lib/push-client";
@@ -399,6 +400,25 @@ export default function PagerBoard({
     return result;
   }, [incidents, search]);
 
+  // Areas offered by the alert-preferences picker: every LGA the loaded
+  // incidents mention, commonest first. Built from the board's own rows (not
+  // `filtered`, so searching doesn't shrink the list) which guarantees the names
+  // are spelled exactly as they arrive over the air. Counted per incident rather
+  // than per page, so a job paged to six brigades doesn't read as six jobs.
+  const lgaOptions = useMemo(() => {
+    const counts = new Map<string, { name: string; seen: Set<string> }>();
+    for (const i of incidents) {
+      const name = lgaFromLocation(i.location);
+      if (!name) continue;
+      const key = lgaKey(name);
+      if (!counts.has(key)) counts.set(key, { name, seen: new Set() });
+      counts.get(key)!.seen.add(i.incidentNo || i.id);
+    }
+    return [...counts.values()]
+      .map(({ name, seen }) => ({ name, count: seen.size }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  }, [incidents]);
+
   // Merge rows that share the same incident number into one display entry.
   const merged = useMemo(() => {
     const map = new Map<string, Entry>();
@@ -484,7 +504,7 @@ export default function PagerBoard({
           Raw feed
         </Link>
 
-        <EnableAlerts />
+        <EnableAlerts lgaOptions={lgaOptions} />
 
         <button
           className="signout-btn"

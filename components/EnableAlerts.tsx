@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { pushSupported, ensureSubscribed } from "@/lib/push-client";
+import AlertPrefsModal, { type LgaOption } from "@/components/AlertPrefs";
 
 type State =
   | "loading"       // figuring out support/permission
@@ -24,8 +25,9 @@ function isStandalone(): boolean {
   );
 }
 
-export default function EnableAlerts() {
+export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOption[] }) {
   const [state, setState] = useState<State>("loading");
+  const [showPrefs, setShowPrefs] = useState(false);
 
   useEffect(() => {
     if (!pushSupported()) {
@@ -47,7 +49,13 @@ export default function EnableAlerts() {
     try {
       setState("loading");
       const endpoint = await ensureSubscribed();
-      if (endpoint) return setState("subscribed");
+      if (endpoint) {
+        setState("subscribed");
+        // Straight into the picker: a device that just enabled alerts is about
+        // to receive every incident in the state until it narrows.
+        setShowPrefs(true);
+        return;
+      }
       // ensureSubscribed returns null on denial or a failed save — distinguish.
       setState(Notification.permission === "denied" ? "denied" : "error");
     } catch (err) {
@@ -67,7 +75,20 @@ export default function EnableAlerts() {
     );
   }
   if (state === "subscribed") {
-    return <span className="alerts-on" title="Phone alerts are on">🔔 Alerts on</span>;
+    return (
+      <>
+        <button
+          className="alerts-on"
+          title="Phone alerts are on — tap to choose which areas you're alerted for"
+          onClick={() => setShowPrefs(true)}
+        >
+          🔔 Alerts on
+        </button>
+        {showPrefs && (
+          <AlertPrefsModal lgaOptions={lgaOptions} onClose={() => setShowPrefs(false)} />
+        )}
+      </>
+    );
   }
   if (state === "denied") {
     return (

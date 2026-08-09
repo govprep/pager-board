@@ -61,6 +61,61 @@ dedup key is a sha256 of the whitespace-normalised text — computed in
 `lib/raw-feed.ts` and, for the one-time backfill, in `supabase/schema.sql`. The
 two must stay in step or old rows stop deduplicating against new ones.
 
+## Phone alerts: choosing your areas
+
+Tapping **🔔 Alerts on** in the header opens the area picker. A device either
+gets **everything** (the default, and what every already-subscribed device keeps
+doing) or only the areas it picks. Preferences live per *device*, not per member
+— a phone and a tablet on the same invite code can watch different areas.
+
+Areas are chosen two ways, because the agencies page differently:
+
+| | what the page carries | how you subscribe |
+|---|---|---|
+| **RFS** | a full address ending in the LGA — `…,MOSS VALE,WINGECARRIBEE (NSW),2577` | pick the **LGA** |
+| **FRNSW** | no address at all — `FRINC TYPE: AFA TURNOUT: 428 INC: 155212-09082026` | type the **station number** |
+
+The two lists are independent and OR'd: an incident alerts you if its LGA is on
+your list *or* any of its turnouts is. Picking an LGA does **not** pull in the
+FRNSW stations inside it — that mapping isn't in the pager data, so it would
+have to be guessed.
+
+Two things follow from the data, both worth knowing:
+
+- The LGA is located by its `(NSW)` parenthetical, not by counting commas — a
+  cross-street or road name adds a segment and shifts it right.
+- About 2% of RFS pages arrive with no usable address and no turnout. They reach
+  everyone on "everything" and nobody who has narrowed.
+
+LGA names are matched on a normalised key (case, punctuation and council-type
+suffixes removed), so `QUEANBEYAN PALERANG`, `Queanbeyan-Palerang Regional` and
+`LAKE MACQUARIE CITY` all match the way you'd expect. The picker offers the LGAs
+actually present on the loaded board, so the spelling always matches what comes
+over the air; anything else can be typed in.
+
+The FRNSW station list (`lib/frnsw-stations.ts`) is the full 335-station index
+from [fire.nsw.gov.au](https://www.fire.nsw.gov.au/contact/contact-details/locations/station-index),
+verified against every turnout number the live feed has actually paged.
+
+### Custom notification tones
+
+Not possible from a web app, and not a matter of effort. The Notifications API
+had a `sound` option; it was never implemented by any browser and was removed
+from the standard in 2018, because the platforms' notification centres can't
+support it properly. So:
+
+- **iOS** (installed PWA) — the system notification sound only. No API, and web
+  push can't use Critical Alerts.
+- **Android** — the app can't set a sound, but *the user* can: Chrome files each
+  site's notifications under their own channel, so a per-site tone can be chosen
+  in the OS notification settings.
+- **While the board is open** a page can of course play any audio it likes; a
+  real pager tone here would be a small addition. It can't help when the app is
+  closed, which is when it would matter most.
+
+A genuinely custom tone (or one that overrides silent mode) needs a native app
+wrapper, not a PWA.
+
 ## Architecture / expansion points
 
 ```
@@ -69,14 +124,18 @@ app/
   raw/page.tsx          the raw feed, behind the same gate
   api/incidents/route.ts GET (list) + POST (ingest raw lines)
   api/raw/route.ts      GET the raw feed (search + status filter, keyset paged)
+  api/push/prefs/route.ts GET/PUT a device's alert areas
 components/
   AccessGate.tsx        per-device invite gate; picks board vs. raw feed
   PagerBoard.tsx        client UI: filtering, facets, live polling
   RawFeed.tsx           client UI: the unfiltered stream
+  AlertPrefs.tsx        the area picker modal (LGAs + FRNSW stations)
 lib/
   types.ts              Incident + PagerMessage shapes (map 1:1 to Supabase tables)
   parser.ts             raw pager line -> Incident (forgiving)
   filter.ts             which lines are allowed onto the board
+  lga.ts                pull the LGA out of an RFS address, and normalise it
+  alert-prefs.ts        who gets pushed what — shared by the API and the feeder
   raw-feed.ts           normalise / hash / classify, and record the raw stream
   store.ts              ** data-source seam — the one file to change for Supabase **
   supabase.ts           step-by-step notes + table schema

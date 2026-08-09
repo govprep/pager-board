@@ -348,10 +348,38 @@ const STATIONS: Record<string, string> = {
   "514": "BANORA POINT",
 };
 
+// FRNSW pages name the responding station(s) in a TURNOUT field, which may hold
+// several space-separated numbers:
+//   FRINC TYPE: HOUSE FIRE TURNOUT: 251 255 INC: 155168-09082026
+// The lookahead stops at the next key so LOC:/INC: never get eaten as numbers.
+const TURNOUT_RE = /\bTURNOUT:\s*([\d\s]+?)(?=\s+(?:LOC|INC):|\s*$)/i;
+
+/** Normalised form of a turnout number — leading zeros stripped ("081" → "81"). */
+export function turnoutKey(turnout: string): string {
+  return turnout.trim().replace(/^0+/, "") || turnout.trim();
+}
+
+/**
+ * Every turnout number on a FRNSW line, as written. Empty for anything that
+ * isn't a FRNSW page. Callers comparing numbers should run them through
+ * `turnoutKey` first.
+ */
+export function frnswTurnouts(line: string): string[] {
+  const m = (line ?? "").match(TURNOUT_RE);
+  if (!m) return [];
+  return m[1].trim().split(/\s+/).filter(Boolean);
+}
+
+/** Every station number we know, ascending — the picker's option list. */
+export function allFrnswStations(): { number: string; name: string }[] {
+  return Object.entries(STATIONS)
+    .map(([number, name]) => ({ number, name }))
+    .sort((a, b) => Number(a.number) - Number(b.number));
+}
+
 /** Station name for a FRNSW turnout number, or undefined if unknown. */
 export function frnswStationName(turnout: string): string | undefined {
-  const key = turnout.trim().replace(/^0+/, "");
-  return STATIONS[key];
+  return STATIONS[turnoutKey(turnout)];
 }
 
 /**

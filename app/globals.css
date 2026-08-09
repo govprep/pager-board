@@ -160,7 +160,14 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
   white-space: nowrap;
   flex: none;
 }
-.alerts-on { color: var(--text-2); }
+/* Subscribed state doubles as the way into the area picker. */
+.alerts-on {
+  color: var(--text-2);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.alerts-on:hover { color: var(--text); }
 
 /* ── sign out ────────────────────────────────────────── */
 .signout-btn {
@@ -776,6 +783,135 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   white-space: nowrap;
 }
 
+/* ── alert preferences modal ─────────────────────────── */
+.prefs-modal { max-width: 460px; }
+
+.prefs-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.prefs-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.prefs-radio input { margin-top: 2px; accent-color: var(--btn); flex: none; }
+.prefs-radio > span { display: flex; flex-direction: column; gap: 2px; }
+.prefs-sub { font-size: 11px; color: var(--text-2); }
+
+/* Both lists grey out (but stay readable) while "Everything" is selected. */
+.prefs-disabled { opacity: 0.4; pointer-events: none; }
+
+.prefs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.prefs-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  height: 34px;
+  padding: 0 10px;
+  color: var(--text);
+  /* 16px keeps iOS Safari from zooming the page when the field takes focus. */
+  font-size: 16px;
+  width: 100%;
+}
+.prefs-input:focus { outline: none; border-color: rgba(255,255,255,0.3); }
+.prefs-input::placeholder { color: var(--text-3); font-size: 13px; }
+
+.prefs-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.prefs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--badge-bg);
+  border: 1px solid var(--badge-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--badge-text);
+  cursor: pointer;
+}
+.prefs-chip:hover { border-color: var(--text-3); }
+.prefs-chip-x { color: var(--text-2); font-size: 13px; line-height: 1; }
+
+.prefs-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.prefs-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.prefs-option:hover { background: var(--surface-2); }
+.prefs-num { font-family: var(--mono); color: var(--text-2); }
+.prefs-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  flex: none;
+}
+
+.prefs-note { font-size: 11px; color: var(--text-3); line-height: 1.5; }
+.prefs-warn { font-size: 12px; color: var(--tag-rescue-text); line-height: 1.5; }
+
+.prefs-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.prefs-cancel,
+.prefs-save {
+  border-radius: 6px;
+  height: 34px;
+  padding: 0 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.prefs-cancel {
+  background: none;
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+}
+.prefs-cancel:hover { border-color: var(--text-3); color: var(--text); }
+.prefs-save {
+  background: var(--btn);
+  border: 1px solid var(--btn);
+  color: #fff;
+  font-weight: 600;
+}
+.prefs-save:disabled { opacity: 0.6; cursor: default; }
+
 /* ── mobile portrait ─────────────────────────────────── */
 @media (max-width: 600px) {
   /* Topbar: wrap so the search drops onto its own full-width row.
@@ -861,4 +997,20 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 
   /* Hide empty-cell placeholders — they'd be stray dots in a stacked card. */
   .list-wrap tr.raw-row td .dim { color: var(--text-3); }
+
+  /* Alert prefs: the topbar wraps to ~2 rows on a phone, so this overlay can't
+     sit at a fixed 50px. Cover the whole screen and let the modal use the
+     height — two option lists plus their chips need the room. Scoped to this
+     modal (the incident card deliberately keeps the header visible), and lifted
+     above the topbar's z-index:60 or the header would paint over it. */
+  .prefs-overlay { top: 0; padding: 12px; align-items: flex-start; z-index: 70; }
+  .prefs-modal { max-height: calc(100dvh - 24px); }
+  .prefs-list { max-height: 132px; }
+  /* Keep Save reachable without scrolling back down a long list. */
+  .prefs-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    padding-bottom: 4px;
+  }
 }
