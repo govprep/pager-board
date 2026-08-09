@@ -19,7 +19,12 @@
 
 import { LGA_ALIASES } from "./nsw-lgas";
 
-const STATE_SEGMENT_RE = /\((?:NSW|ACT|VIC|QLD|SA|NT|TAS|WA)\)/i;
+// The parenthetical marking the LGA segment. Usually the state, but some pages
+// (VRA rescue jobs, in particular) label it literally:
+//   11 PALOMAR PDE,FRAVENT ST,TOUKLEY,CENTRAL COAST (LGA),2263
+// Without "LGA" here those addresses yield no LGA at all, so no device watching
+// that area would ever be alerted to them.
+const STATE_SEGMENT_RE = /\((?:NSW|ACT|VIC|QLD|SA|NT|TAS|WA|LGA)\)/i;
 
 // Generic council-type suffixes, stripped from the end of a name before
 // comparing. Only trailing tokens are removed, so real names that merely

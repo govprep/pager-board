@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getAlertPrefs, saveAlertPrefs } from "@/lib/push-client";
+import { getAlertStatus, saveAlertPrefs } from "@/lib/push-client";
 import { DEFAULT_PREFS, type AlertPrefs } from "@/lib/alert-prefs";
 import { lgaKey } from "@/lib/lga";
 import { KNOWN_LGAS } from "@/lib/nsw-lgas";
@@ -39,8 +39,8 @@ export default function AlertPrefsModal({
   const [stationQuery, setStationQuery] = useState("");
 
   useEffect(() => {
-    getAlertPrefs()
-      .then(setPrefs)
+    getAlertStatus()
+      .then((s) => setPrefs(s.prefs))
       .finally(() => setLoaded(true));
   }, []);
 

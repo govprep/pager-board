@@ -83,7 +83,9 @@ have to be guessed.
 Two things follow from the data, both worth knowing:
 
 - The LGA is located by its `(NSW)` parenthetical, not by counting commas — a
-  cross-street or road name adds a segment and shifts it right.
+  cross-street or road name adds a segment and shifts it right. Some pages label
+  the segment `(LGA)` instead of the state, VRA rescue jobs especially, so both
+  count.
 - About 2% of RFS pages arrive with no usable address and no turnout. They reach
   everyone on "everything" and nobody who has narrowed.
 
@@ -110,6 +112,35 @@ and run each message through `lgaFromLocation()`. Note `since` only walks
 The FRNSW station list (`lib/frnsw-stations.ts`) is the full 335-station index
 from [fire.nsw.gov.au](https://www.fire.nsw.gov.au/contact/contact-details/locations/station-index),
 verified against every turnout number the live feed has actually paged.
+
+### When the areas don't seem to be respected
+
+`npm run alerts` lists every enrolled phone and exactly what it's set to;
+`npm run alerts check <incident-no>` replays the feeder's matching for one job
+and shows which devices it reached. Between them they cover the three ways a
+phone ends up buzzing for somewhere it never asked for:
+
+- **The feeder is on old code.** The filtering lives in `feeder/push.ts`, in the
+  long-running feeder process — not in the web app. A feeder started before the
+  area picker shipped keeps pushing everything to everyone no matter what the
+  picker saves. On startup it now logs `[push] enabled — area filtering on`;
+  no line, no filtering. Restart it.
+- **The device never chose.** Anything enrolled before the picker existed sits on
+  `alert_all` — a default, not a choice. The board now opens the picker once,
+  unprompted, on such a device; `npm run alerts` shows them as
+  `everything (never chose)`, and `npm run alerts forget <endpoint-tail>` cuts
+  one loose.
+- **The device has a stale twin.** Push services rotate endpoints, and the old
+  row used to stay behind on its own preferences, pushing alongside the new one —
+  one phone, two subscriptions, only one of them narrowed. Subscribing now names
+  the device (a SHA-256 of its invite token, in `device_key`), carries its chosen
+  areas onto the new endpoint and deletes the old row. Rows written before this
+  have no `device_key` and can't be paired up retroactively — `forget` them.
+
+Backfill is the fourth source of unwanted buzzing, and isn't about areas at all:
+re-scraping history re-upserts old rows with no `pushed_at`, and each one rings
+as breaking news. Pages received more than `PUSH_MAX_AGE_MIN` minutes ago
+(default 30) are marked pushed without notifying.
 
 ### Custom notification tones
 
@@ -139,6 +170,7 @@ app/
   api/incidents/route.ts GET (list) + POST (ingest raw lines)
   api/raw/route.ts      GET the raw feed (search + status filter, keyset paged)
   api/push/prefs/route.ts GET/PUT a device's alert areas
+  api/push/subscribe/route.ts enrol a device, retiring the endpoint it replaced
 components/
   AccessGate.tsx        per-device invite gate; picks board vs. raw feed
   PagerBoard.tsx        client UI: filtering, facets, live polling
@@ -151,6 +183,7 @@ lib/
   lga.ts                pull the LGA out of an RFS address, and normalise it
   nsw-lgas.ts           every LGA the feed has paged, + its misspellings
   alert-prefs.ts        who gets pushed what — shared by the API and the feeder
+  push-client.ts        browser side: subscribe, device id, save/read areas
   raw-feed.ts           normalise / hash / classify, and record the raw stream
   store.ts              ** data-source seam — the one file to change for Supabase **
   supabase.ts           step-by-step notes + table schema

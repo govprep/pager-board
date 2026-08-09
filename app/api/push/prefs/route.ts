@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { DEFAULT_PREFS, sanitizePrefs, type AlertPrefs } from "@/lib/alert-prefs";
+import { withOptionalColumns } from "@/lib/push-columns";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ function rowToPrefs(row: any): AlertPrefs {
   };
 }
 
-// GET /api/push/prefs?endpoint=..  -> { prefs }
+// GET /api/push/prefs?endpoint=..  -> { prefs, chosen }
 export async function GET(req: Request) {
   const endpoint = new URL(req.url).searchParams.get("endpoint");
   if (!endpoint) {
@@ -39,7 +40,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
   // An unknown endpoint isn't an error — the device just hasn't subscribed yet.
-  return NextResponse.json({ prefs: data ? rowToPrefs(data) : DEFAULT_PREFS });
+  // `chosen` says whether these preferences were picked or are the back-compat
+  // default; the board offers the picker once to devices that never picked.
+  return NextResponse.json({
+    prefs: data ? rowToPrefs(data) : DEFAULT_PREFS,
+    chosen: !!data?.prefs_set_at,
+  });
 }
 
 // PUT /api/push/prefs  { endpoint, alertAll, lgas, stations } -> save.
@@ -58,11 +64,23 @@ export async function PUT(req: Request) {
   }
 
   const prefs = sanitizePrefs(body);
-  const { data, error } = await supabase
-    .from("push_subscriptions")
-    .update({ alert_all: prefs.alertAll, lgas: prefs.lgas, stations: prefs.stations })
-    .eq("endpoint", endpoint)
-    .select("endpoint");
+  // prefs_set_at is stamped even when the choice is "everything": what matters
+  // downstream is that a person made it, so we stop offering the picker and a
+  // rotated endpoint knows these preferences are worth carrying over.
+  const { data, error } = await withOptionalColumns<{ endpoint: string }[]>(
+    { prefs_set_at: new Date().toISOString() },
+    (extras) =>
+      supabase
+        .from("push_subscriptions")
+        .update({
+          alert_all: prefs.alertAll,
+          lgas: prefs.lgas,
+          stations: prefs.stations,
+          ...extras,
+        })
+        .eq("endpoint", endpoint)
+        .select("endpoint"),
+  );
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -164,6 +164,25 @@ alter table public.push_subscriptions
 alter table public.push_subscriptions
   add column if not exists stations  text[]  not null default '{}';
 
+-- Which physical device this subscription belongs to: a SHA-256 of the device's
+-- durable invite token (never the token itself). Push services hand out a new
+-- endpoint when they rotate a subscription, which used to leave the old row
+-- behind — still enrolled, still on the preferences it had, quietly pushing
+-- alongside the new one. Subscribing now carries the old row's preferences onto
+-- the new endpoint and deletes it. Null on rows written before this shipped, and
+-- on browsers that haven't enrolled (crypto.subtle needs a secure context).
+alter table public.push_subscriptions
+  add column if not exists device_key text;
+create index if not exists push_subscriptions_device_key_idx
+  on public.push_subscriptions (device_key) where device_key is not null;
+
+-- When this device last picked its areas. Null means it has never opened the
+-- picker — the alert_all above is a default it never asked for, not a choice —
+-- so the board offers the picker once, and `npm run alerts` can tell the two
+-- apart.
+alter table public.push_subscriptions
+  add column if not exists prefs_set_at timestamptz;
+
 -- ── Stand-down flags ─────────────────────────────────────────────────────────
 -- Set when a STOP / STAND DOWN / NNTA message arrives referencing this incident
 -- number (see lib/standdown.ts). NULL = not stood down. Stamped on every row

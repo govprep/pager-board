@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { pushSupported, ensureSubscribed } from "@/lib/push-client";
+import { pushSupported, ensureSubscribed, getAlertStatus } from "@/lib/push-client";
 import AlertPrefsModal, { type LgaOption } from "@/components/AlertPrefs";
 
 type State =
@@ -25,6 +25,10 @@ function isStandalone(): boolean {
   );
 }
 
+// Set once we've shown a device the picker unprompted, so it's an offer and not
+// a nag. Local to the device, like the subscription it's about.
+const PICKER_OFFERED_KEY = "belterhub.alerts.picker-offered";
+
 export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOption[] }) {
   const [state, setState] = useState<State>("loading");
   const [showPrefs, setShowPrefs] = useState(false);
@@ -42,8 +46,25 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
     navigator.serviceWorker.getRegistration().then(async (reg) => {
       const sub = reg && (await reg.pushManager.getSubscription());
       setState(sub ? "subscribed" : "prompt");
+      if (sub) void offerPicker();
     });
   }, []);
+
+  // Devices enrolled before the area picker shipped are on "everything" by
+  // default — a setting nobody chose and nobody can see. Open the picker for
+  // them once, then leave them alone whatever they decide (including closing it,
+  // hence the local flag: the server only records an actual save).
+  async function offerPicker() {
+    try {
+      if (localStorage.getItem(PICKER_OFFERED_KEY)) return;
+      const { chosen } = await getAlertStatus();
+      if (chosen) return;
+      localStorage.setItem(PICKER_OFFERED_KEY, "1");
+      setShowPrefs(true);
+    } catch {
+      /* storage blocked or offline — the button still opens it by hand */
+    }
+  }
 
   async function enable() {
     try {
@@ -53,6 +74,7 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
         setState("subscribed");
         // Straight into the picker: a device that just enabled alerts is about
         // to receive every incident in the state until it narrows.
+        try { localStorage.setItem(PICKER_OFFERED_KEY, "1"); } catch { /* ignore */ }
         setShowPrefs(true);
         return;
       }

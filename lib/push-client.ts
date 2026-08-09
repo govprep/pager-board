@@ -21,6 +21,25 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
   return out;
 }
 
+// A stable id for this device, so the server can recognise a re-subscribe as the
+// same phone rather than a second one. Derived from the durable invite token the
+// access gate already stores (components/AccessGate.tsx), hashed so the push
+// table never holds the credential itself. Empty when the device isn't enrolled
+// or crypto.subtle is unavailable — the server just skips the reconcile.
+const DEVICE_TOKEN_KEY = "belterhub.invite";
+
+async function deviceKey(): Promise<string> {
+  let token: string | null = null;
+  try {
+    token = localStorage.getItem(DEVICE_TOKEN_KEY);
+  } catch {
+    return ""; // storage blocked (private mode, iframe)
+  }
+  if (!token || !globalThis.crypto?.subtle) return "";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** True when this browser can do web push at all and we have a key to use. */
 export function pushSupported(): boolean {
   return (
@@ -67,23 +86,33 @@ export async function ensureSubscribed(): Promise<string | null> {
   const res = await fetch("/api/push/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(sub.toJSON()),
+    body: JSON.stringify({ ...sub.toJSON(), deviceKey: await deviceKey() }),
   });
   return res.ok ? sub.endpoint : null;
 }
 
+export interface AlertStatus {
+  prefs: AlertPrefs;
+  /**
+   * Whether this device has ever picked its areas. False means the "everything"
+   * it's on is the back-compat default rather than a choice — true of every
+   * device enrolled before the picker existed.
+   */
+  chosen: boolean;
+}
+
 /**
- * This device's area preferences. Returns the defaults ("everything") when the
- * device isn't subscribed or the request fails, so the modal always has
- * something sane to render.
+ * This device's area preferences. Returns the defaults ("everything", never
+ * chosen) when the device isn't subscribed or the request fails, so the modal
+ * always has something sane to render.
  */
-export async function getAlertPrefs(): Promise<AlertPrefs> {
+export async function getAlertStatus(): Promise<AlertStatus> {
   const endpoint = await currentEndpoint();
-  if (!endpoint) return DEFAULT_PREFS;
+  if (!endpoint) return { prefs: DEFAULT_PREFS, chosen: false };
   const res = await fetch(`/api/push/prefs?endpoint=${encodeURIComponent(endpoint)}`);
-  if (!res.ok) return DEFAULT_PREFS;
+  if (!res.ok) return { prefs: DEFAULT_PREFS, chosen: false };
   const data = await res.json();
-  return data.prefs ?? DEFAULT_PREFS;
+  return { prefs: data.prefs ?? DEFAULT_PREFS, chosen: !!data.chosen };
 }
 
 /**

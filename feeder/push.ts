@@ -40,7 +40,28 @@ function configure(): boolean {
   const subject = process.env.VAPID_SUBJECT || "mailto:admin@example.com";
   webpush.setVapidDetails(subject, publicKey, privateKey);
   configured = true;
+  // Printed once, so a glance at the log says whether the process that's
+  // actually sending has the area filter — a feeder started before this shipped
+  // keeps running the old code and pushes everything to everyone.
+  console.log(`[push] enabled — area filtering on, ignoring pages older than ${maxAgeMin()} min`);
   return true;
+}
+
+// Don't notify for pages that arrived long ago. Re-scraping history or seeding
+// re-upserts old rows with no pushed_at, and every one of them would ring as
+// breaking news — the board has had March incidents buzzing phones in August.
+// They're still marked pushed, so they never queue up again.
+const DEFAULT_MAX_AGE_MIN = 30;
+
+function maxAgeMin(): number {
+  const raw = Number(process.env.PUSH_MAX_AGE_MIN);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_AGE_MIN;
+}
+
+function isStale(inc: Incident): boolean {
+  const received = Date.parse(inc.receivedAt);
+  if (!Number.isFinite(received)) return false; // no usable time → treat as live
+  return Date.now() - received > maxAgeMin() * 60_000;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -198,11 +219,18 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
   let newCount = 0;
   let updateCount = 0;
   let skippedCount = 0; // new incidents nobody's preferences asked for
+  let staleCount = 0; // pages too old to be news (backfill / re-scrape)
 
   for (const g of groups.values()) {
     const { inc } = g;
     // Always mark handled so they don't re-evaluate on every future batch.
     handled.push(...g.ids);
+
+    // Backfilled history: stamp it pushed, but don't ring anyone's phone.
+    if (g.incs.every(isStale)) {
+      staleCount++;
+      continue;
+    }
 
     const name = (await friendlyType(inc.type)).toUpperCase();
 
@@ -281,7 +309,8 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
     else
       console.log(
         `[push] ${newCount} new, ${updateCount} update(s)` +
-          (skippedCount ? `, ${skippedCount} outside everyone's areas` : ""),
+          (skippedCount ? `, ${skippedCount} outside everyone's areas` : "") +
+          (staleCount ? `, ${staleCount} too old to notify` : ""),
       );
   }
 }
