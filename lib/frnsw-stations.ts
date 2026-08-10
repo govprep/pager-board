@@ -395,10 +395,16 @@ export function frnswStationName(turnout: string): string | undefined {
 /**
  * Label a FRNSW turnout for the board: "428" → "428 QUEANBEYAN".
  * Unknown numbers (and non-numeric turnouts) are returned unchanged.
+ *
+ * The number is normalised, not echoed as written: sources disagree about
+ * zero-padding, and "088 CAMPBELLTOWN" beside "88 CAMPBELLTOWN" is one station
+ * shown as two — two badges on the job, and two rows, since the row id is built
+ * from the unit.
  */
 export function frnswTurnoutLabel(turnout: string): string {
   const t = turnout.trim();
   if (!/^\d+$/.test(t)) return turnout;
+  const key = turnoutKey(t);
   const name = frnswStationName(t);
-  return name ? `${t} ${name}` : turnout;
+  return name ? `${key} ${name}` : key;
 }

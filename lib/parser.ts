@@ -1,5 +1,5 @@
 import type { Incident, Coords } from "./types";
-import { frnswTurnoutLabel } from "./frnsw-stations";
+import { frnswTurnoutLabel, turnoutKey } from "./frnsw-stations";
 
 // Pager lines come in (at least) two shapes. The parser sniffs which one it is
 // and is forgiving about everything — a line it can't fully read still yields an
@@ -57,7 +57,10 @@ function parseFrincDash(line: string, receivedAt: string): Incident | null {
   if (!m) return null;
 
   const type = m[1].trim();
-  const turnout = m[2];
+  // Normalised here, not just at display time: the id below is built from it,
+  // and a source that pads ("– 088 –") would otherwise open a second row for a
+  // station another source reports as "88".
+  const turnout = turnoutKey(m[2]);
   const incRaw = m[3];
   // Same rule as the canonical form: "155212-09082026" is a number and a date.
   const incidentNo = incRaw.split("-")[0]?.trim() || incRaw;
@@ -140,12 +143,16 @@ function parseKeyValue(line: string, receivedAt: string): Incident {
   // FRNSW pages (marked by "FRINC") identify the station by turnout number only —
   // look it up so the board shows "428 QUEANBEYAN" rather than a bare "428".
   // Unknown/non-numeric turnouts pass through unchanged.
-  const displayUnit = /\bFRINC\b/i.test(line) ? frnswTurnoutLabel(unit) : unit;
+  const isFrnsw = /\bFRINC\b/i.test(line);
+  const displayUnit = isFrnsw ? frnswTurnoutLabel(unit) : unit;
+  // Zero-padding varies by source, so the id keys on the normalised turnout —
+  // "088" and "88" are one station and must land on one row.
+  const idUnit = isFrnsw ? turnoutKey(unit) : unit;
 
   return {
     id: incidentNo
-      ? unit ? `${incidentNo}-${unit}` : incidentNo
-      : `${unit || "INC"}-${receivedAt}`,
+      ? idUnit ? `${incidentNo}-${idUnit}` : incidentNo
+      : `${idUnit || "INC"}-${receivedAt}`,
     incidentNo,
     type,
     unit: displayUnit,
