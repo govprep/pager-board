@@ -108,11 +108,20 @@ function splitAddress(loc: string): { street: string; locality: string } {
   };
 }
 
-// How long a row stays marked as having just gained a resource: two 2s pulses.
-// Kept in step with the `unit-added-pulse` animation in globals.css — the class
-// is dropped on a timer rather than on animationend so it still clears for
-// someone whose reduced-motion setting has turned the animation down.
+// How long a newly added resource's badge stays marked: two 2s pulses. Kept in
+// step with the `unit-added-pulse` animation in globals.css — the class is
+// dropped on a timer rather than on animationend so it still clears for someone
+// whose reduced-motion setting has turned the animation down.
 const FLASH_MS = 4000;
+
+// Flashes are tracked per {incident, resource} rather than per incident, since a
+// job can gain one appliance while the six already on it stay put. An incident
+// key never contains a space (it's the incident number, or a row id built from
+// one), so a space is enough to keep the halves apart even though unit names
+// have their own ("428 QUEANBEYAN").
+function flashKey(incidentKey: string, unit: string): string {
+  return `${incidentKey} ${unit}`;
+}
 
 // How many rows to pull per request. The board loads the newest page first,
 // then fetches older pages on scroll (see the IntersectionObserver below).
@@ -135,11 +144,21 @@ type Unit = { name: string; stopped: boolean };
 
 type Entry = { inc: Incident; units: Unit[] };
 
-function UnitBadge({ unit }: { unit: Unit }) {
+// `flash` marks a resource that has only just been added to the job (see the
+// diff in PagerBoard below), which pulses this badge rather than the whole row —
+// on a job running six appliances, the row already being there is the point, and
+// what's new is which badge joined it.
+function UnitBadge({ unit, flash = false }: { unit: Unit; flash?: boolean }) {
   return (
     <span
-      className={`badge${unit.stopped ? " stopped" : ""}`}
-      title={unit.stopped ? "Stood down — stand-down received for this resource" : undefined}
+      className={`badge${unit.stopped ? " stopped" : ""}${flash ? " added" : ""}`}
+      title={
+        unit.stopped
+          ? "Stood down — stand-down received for this resource"
+          : flash
+            ? "Just added to this incident"
+            : undefined
+      }
     >
       {unit.name}
     </span>
@@ -430,9 +449,10 @@ export default function PagerBoard({
 
   useEffect(() => { incidentsRef.current = incidents; }, [incidents]);
 
-  // Rows that have just gained a resource, and the timers that will clear them.
-  // `seenUnits` is the previous pass's {incident -> units} picture, which the
-  // effect below diffs against — null until the first load has been recorded.
+  // Resources that have just been added to a job (flashKey'd), and the timers
+  // that will clear them. `seenUnits` is the previous pass's {incident -> units}
+  // picture, which the effect below diffs against — null until the first load
+  // has been recorded.
   const [flashing, setFlashing] = useState<Set<string>>(() => new Set());
   const seenUnitsRef = useRef<Map<string, Set<string>> | null>(null);
   const flashTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -646,13 +666,15 @@ export default function PagerBoard({
     }));
   }, [filtered]);
 
-  // ── flash a job that has just gained a resource ──────────────────────────
+  // ── flash the resource a job has just gained ─────────────────────────────
   //
   // A job keeps growing after it alerts: control pages more brigades to it
   // minutes later, and the only sign on screen is a badge quietly appearing in a
-  // row that's already been read. So the row says so itself — two slow blue
-  // pulses, blue rather than red because it means "there's more of this one",
-  // not "here's a new emergency".
+  // row that's already been read. So that badge says so itself — two slow blue
+  // pulses, blue rather than red because it means "there's one more of these",
+  // not "here's a new emergency". The pulse is on the badge and not the row
+  // because the row isn't what changed: on a job already running six appliances,
+  // what's worth the look is which one just joined them.
   //
   // Diffed against `incidents` rather than `merged`, so typing in the search box
   // can't read as resources arriving and leaving. A job seen for the first time
@@ -677,7 +699,7 @@ export default function PagerBoard({
       const before = prev.get(key);
       if (!before) continue;
       for (const name of units) {
-        if (!before.has(name)) { grown.push(key); break; }
+        if (!before.has(name)) grown.push(flashKey(key, name));
       }
     }
     if (!grown.length) return;
@@ -819,10 +841,7 @@ export default function PagerBoard({
                   const { street, locality } = splitAddress(i.location);
                   const key = i.incidentNo || i.id;
                   return (
-                    <tr
-                      key={key}
-                      className={`data-row${flashing.has(key) ? " unit-added" : ""}`}
-                    >
+                    <tr key={key} className="data-row">
                       <td>
                         {i.incidentNo
                           ? <button className="inc-link" onClick={() => setSelected(entry)}>{i.incidentNo}</button>
@@ -867,7 +886,13 @@ export default function PagerBoard({
                       <td>
                         <div className="cs-cell">
                           {units.length > 0
-                            ? units.map(u => <UnitBadge key={u.name} unit={u} />)
+                            ? units.map(u => (
+                                <UnitBadge
+                                  key={u.name}
+                                  unit={u}
+                                  flash={flashing.has(flashKey(key, u.name))}
+                                />
+                              ))
                             : <span className="dim">—</span>}
                         </div>
                       </td>

@@ -37,8 +37,10 @@
   --badge-stopped-text:   #fca5a5;
   --badge-stopped-border: #b91c1c;
 
-  /* the pulse a row gives when a resource is added to it — see .unit-added */
-  --flash-bg:   rgba(37, 99, 235, 0.42);
+  /* …and the pulse a badge gives on the resource's first appearance */
+  --badge-added-bg:     #1e3a8a;
+  --badge-added-text:   #bfdbfe;
+  --badge-added-border: #3b82f6;
 
   --btn:        #1d4ed8;
   --btn-reset:  #292929;
@@ -327,24 +329,6 @@ tbody tr.data-row { border-bottom: 1px solid var(--border); }
 tbody tr.data-row:hover { background: var(--surface-2); }
 tbody td { padding: 10px 14px; vertical-align: middle; }
 
-/* A job that has just gained a resource. Two 2s pulses — slow enough to read as
-   "look again at this row" rather than an alarm, and blue so it can't be
-   mistaken for the red the board spends on stood-down resources. The animation
-   outranks the :hover background above (animations beat normal declarations), so
-   it still shows under the cursor. Duration is mirrored by FLASH_MS in
-   PagerBoard.tsx, which is what removes the class. */
-@keyframes unit-added-pulse {
-  0%, 100% { background-color: transparent; }
-  45%      { background-color: var(--flash-bg); }
-}
-tbody tr.data-row.unit-added { animation: unit-added-pulse 2s ease-in-out 2; }
-
-/* Turned down, not off: the row still has to announce itself, so reduced motion
-   gets one slow fade in and out over the same window instead of two pulses. */
-@media (prefers-reduced-motion: reduce) {
-  tbody tr.data-row.unit-added { animation: unit-added-pulse 4s ease-in-out 1; }
-}
-
 /* incident number */
 .inc-link {
   font-family: var(--mono);
@@ -444,6 +428,29 @@ tbody tr.data-row.unit-added { animation: unit-added-pulse 2s ease-in-out 2; }
   text-decoration: line-through;
   text-decoration-thickness: 1px;
   text-decoration-color: rgba(252, 165, 165, 0.6);
+}
+
+/* …and a resource that has only just been added to the job. Two 2s pulses —
+   slow enough to read as "one more of these has joined" rather than an alarm,
+   and blue because red on this board means stood down.
+
+   Deliberately has no 0%/100% frame: the animation starts and ends at whatever
+   the badge already is, so a resource that arrives already stood down pulses
+   from its own red rather than snapping to the plain badge first. Duration is
+   mirrored by FLASH_MS in PagerBoard.tsx, which is what removes the class. */
+@keyframes unit-added-pulse {
+  45% {
+    background-color: var(--badge-added-bg);
+    border-color: var(--badge-added-border);
+    color: var(--badge-added-text);
+  }
+}
+.badge.added { animation: unit-added-pulse 2s ease-in-out 2; }
+
+/* Turned down, not off — the badge still has to announce itself, so reduced
+   motion gets one slow fade in and out over the same window. */
+@media (prefers-reduced-motion: reduce) {
+  .badge.added { animation: unit-added-pulse 4s ease-in-out 1; }
 }
 
 /* status */

@@ -161,11 +161,14 @@ real is re-paged as a structure fire. Both land as *changes to a row already on
 the board*, which is exactly the kind of change someone who has read that row
 will never look at again. So the board points at them:
 
-- **A resource is added** → the row pulses blue twice, slowly, over four seconds
-  (`.unit-added` in `globals.css`, `FLASH_MS` in `components/PagerBoard.tsx`).
-  Blue, because red on this board means a resource has been *stood down*. Only
-  jobs already on screen flash: a job's first page is a whole row appearing, and
-  scrolling older rows into view isn't news either.
+- **A resource is added** → *that badge* pulses blue twice, slowly, over four
+  seconds (`.badge.added` in `globals.css`, `FLASH_MS` in
+  `components/PagerBoard.tsx`). The badge rather than the row, because the row
+  isn't what changed: on a job already running six appliances, what's worth the
+  look is which one just joined them. Blue, because red on this board means a
+  resource has been *stood down*. Only jobs already on screen flash: a job's
+  first page is a whole row appearing, and scrolling older rows into view isn't
+  news either.
 - **The type is updated** → the board follows the latest page that carried a
   type, not the fullest one. This is the single exception to the rule above:
   every other field on a merged row comes from whichever page recorded the job
