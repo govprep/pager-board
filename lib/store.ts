@@ -3,6 +3,7 @@ import { parsePagerMessage, hasIncidentNumber } from "./parser";
 import { standDownIncidentNo } from "./standdown";
 import { passesBoardFilter } from "./filter";
 import { recordRawMessages } from "./raw-feed";
+import { collapseById, dropWeakerThanStored, type IncidentRow } from "./incident-merge";
 import { withInferredOrigin } from "./origin";
 import { supabase } from "./supabase";
 
@@ -110,21 +111,33 @@ export async function addRawMessages(input: string | string[]): Promise<Incident
   }
   if (parsed.length === 0) return [];
 
-  const rows = parsed.map((inc) => ({
-    id: inc.id,
-    incident_no: inc.incidentNo,
-    type: inc.type,
-    unit: inc.unit,
-    location: inc.location,
-    coords: inc.coords,
-    fields: inc.fields,
-    received_at: inc.receivedAt,
-    raw: inc.raw,
-  }));
+  // Same floor the feeder applies (lib/incident-merge.ts): a POSTed line is a
+  // source like any other, so a thin copy of a page mustn't overwrite a fuller
+  // one already on the board. Lines POSTed here carry no timestamp of their own,
+  // so within a batch the fullest copy simply wins.
+  const rows = collapseById(
+    parsed.map((inc) => ({
+      hasTime: false,
+      row: {
+        id: inc.id,
+        incident_no: inc.incidentNo,
+        type: inc.type,
+        unit: inc.unit,
+        location: inc.location,
+        coords: inc.coords,
+        fields: inc.fields,
+        received_at: inc.receivedAt,
+        raw: inc.raw,
+      } satisfies IncidentRow,
+    })),
+  ).map(({ row }) => row);
+
+  const kept = await dropWeakerThanStored(supabase, rows, "api");
+  if (kept.length === 0) return [];
 
   const { data, error } = await supabase
     .from("incidents")
-    .upsert(rows, { onConflict: "id" })
+    .upsert(kept, { onConflict: "id" })
     .select();
   if (error) throw new Error(error.message);
   return (data ?? []).map(toIncident);
@@ -179,6 +192,8 @@ export interface RawFeedQuery {
   q?: string;
   /** Restrict to one classification. */
   status?: RawStatus;
+  /** Every line the pipeline tied to this incident number. */
+  incidentNo?: string;
 }
 
 /**
@@ -194,6 +209,7 @@ export async function listPagerMessages({
   beforeHash,
   q,
   status,
+  incidentNo,
 }: RawFeedQuery = {}): Promise<PagerMessage[]> {
   let query = supabase
     .from("pager_messages")
@@ -208,6 +224,12 @@ export async function listPagerMessages({
     .limit(limit);
 
   if (status) query = query.eq("status", status);
+
+  // The whole history of one job: initial page, every re-page to another
+  // brigade, and the stand-down. Classification stamps `incident_no` on any
+  // line it could read a number out of, whichever bucket it landed in, so this
+  // catches dropped lines too.
+  if (incidentNo) query = query.eq("incident_no", incidentNo);
 
   if (q) {
     // Drop the characters PostgREST uses to separate filter values, then escape
