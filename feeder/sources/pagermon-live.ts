@@ -97,6 +97,19 @@ export function toLine(
   };
 }
 
+// Mirrors feeder/sources/rfspager.ts — see the note on the connection below.
+// Origin/Referer are per-instance: a browser on the site would send that site's
+// own origin, and a mismatched one is worse than none.
+function browserHeaders(baseUrl: string): Record<string, string> {
+  return {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Accept-Language": "en-AU,en;q=0.9",
+    Origin: baseUrl,
+    Referer: `${baseUrl}/`,
+  };
+}
+
 /** Subscribe to one PagerMon instance's live broadcast. Reconnects on its own. */
 export async function pollPagerMonLive(
   post: PostFn,
@@ -121,11 +134,24 @@ export async function pollPagerMonLive(
   // these instances is Cloudflare, and a network that won't pass a WSS upgrade
   // gets `connect error: websocket error` forever instead of a working polling
   // connection. Long-polling is a little chattier and no less live.
+  const headers = browserHeaders(inst.baseUrl);
+
   const socket = io(inst.baseUrl, {
     transports: ["polling", "websocket"],
     reconnection: true,
     reconnectionDelay: 5000,
     reconnectionDelayMax: 30_000,
+    // Socket.IO sends no User-Agent of its own, and every one of these hosts is
+    // behind Cloudflare, which will refuse a UA-less request from a datacenter
+    // IP while waving the same request through from a residential one — so this
+    // fails only once deployed. rfspager.ts carries the same headers for the
+    // same reason. Applied to both transports: the handshake is XHR, the
+    // upgrade is a WS request, and Cloudflare inspects each.
+    extraHeaders: headers,
+    transportOptions: {
+      polling: { extraHeaders: headers },
+      websocket: { extraHeaders: headers },
+    },
   });
 
   socket.on("connect", () =>
