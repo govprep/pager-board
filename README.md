@@ -56,7 +56,7 @@ saw it.
 | your PagerMon (`PAGERMON_URL`) | REST, authenticated, `id` cursor | yes |
 | rfspager.app | HTML scrape, 90s | yes |
 | pocsag.net | PagerMon Socket.IO, live | yes |
-| pager.forcequit.xyz | PagerMon Socket.IO, live | yes |
+| pager.forcequit.xyz | PagerMon Socket.IO, live | yes — **currently blocked**, see below |
 | pager-feed.net | PagerMon Socket.IO, live | **raw feed only** |
 | Telegram group (`TG_SESSION`) | MTProto, live | yes |
 
@@ -71,6 +71,15 @@ with LGA and coordinates), but it listens in the south. In a two-day sample, 33
 of the 57 incident numbers it carried inside the board's window were ones no
 other source had — mostly Illawarra and Shoalhaven, where the rest of the feed
 is thin.
+
+It is nonetheless **switched off**, because the feeder host can't reach it.
+Cloudflare returns 403 to that IP on every path and every transport, with or
+without a browser User-Agent, the body naming "bot" — the zone blocking a
+datacenter IP, most likely Bot Fight Mode. It connects normally from a
+residential connection, so this only appeared on deployment. Nothing on our side
+fixes it: the way back is to have the server's IP allowlisted by whoever runs
+the host, then delete the `disabled` line from `PUBLIC_INSTANCES`. Until then it
+logs one line at startup instead of retrying every 30 seconds forever.
 
 ### Why pager-feed.net is recorded but never parsed
 

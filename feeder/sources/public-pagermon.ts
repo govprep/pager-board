@@ -19,8 +19,26 @@ export const PUBLIC_INSTANCES: LiveInstance[] = [
   // NSW PSN feed hosted by Forcequit. Same PagerMon build, same message shape,
   // and its lines are byte-identical to pocsag's on the pages both see — it just
   // covers different receivers, so it fills in the Illawarra/Shoalhaven traffic
-  // our other sources are thin on.
-  { label: "forcequit", baseUrl: "https://pager.forcequit.xyz" },
+  // our other sources are thin on. Worth having: 33 of the 57 incident numbers
+  // it carried in a two-day sample were ones no other source had.
+  //
+  // Off because the feeder box can't reach it, not because we don't want it.
+  // Cloudflare 403s that IP on every path and every transport — with a browser
+  // User-Agent as much as without, the body naming "bot" — so this is the zone
+  // blocking a datacenter IP, most likely Bot Fight Mode, and nothing on our
+  // side fixes it. It connects fine from a residential connection, which is why
+  // it only showed up once deployed.
+  //
+  // To turn back on: get the server's IP allowlisted by whoever runs the host,
+  // then delete the `disabled` line. Verify with
+  //   curl -o /dev/null -w '%{http_code}\n' \
+  //     'https://pager.forcequit.xyz/socket.io/?EIO=3&transport=polling'
+  // which needs to be 200 from the box, not 403.
+  {
+    label: "forcequit",
+    baseUrl: "https://pager.forcequit.xyz",
+    disabled: "Cloudflare 403s the feeder's IP — needs allowlisting by the host",
+  },
 
   // Raw feed only — deliberately, and not a config we expect to relax.
   //

@@ -38,6 +38,13 @@ export interface LiveInstance {
    * from another source. Raw-only keeps the corroboration without the damage.
    */
   rawOnly?: boolean;
+  /**
+   * Why this instance is switched off. Truthy = don't connect at all, just say
+   * so once at startup. For a host that can't be reached rather than one we've
+   * chosen to distrust — an unreachable source otherwise retries every 30s
+   * forever and buries the log.
+   */
+  disabled?: string;
 }
 
 // Instances disagree on how to spell an agency: pocsag.net says "FRNSW" and
@@ -116,6 +123,11 @@ export async function pollPagerMonLive(
   inst: LiveInstance,
 ): Promise<void> {
   const tag = `[${inst.label}]`;
+
+  if (inst.disabled) {
+    console.warn(`${tag} disabled — ${inst.disabled}`);
+    return;
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let io: any;
