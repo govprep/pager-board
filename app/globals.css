@@ -274,6 +274,24 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
 
 table { width: 100%; border-collapse: collapse; }
 
+/* The board's columns are set by the header, not by whatever the widest cell
+   happens to hold. Without this a single long incident type ("STRUCTURE/
+   BUILDING/HOUSE FIRE") drags its column ~110px past its stated width, and the
+   address — the column that actually needs the room — pays for it, wrapping on
+   exactly the rows that have the most to say. The raw feed keeps auto layout:
+   its columns are metadata of predictable length and the message wants whatever
+   is left. */
+.board-table { table-layout: fixed; }
+
+/* The incident number and its time read as one fact, but the default 14px cell
+   padding on each side puts a 28px trench between them — on top of whatever
+   slack the column had. Close it up: the pair now sits together, and the space
+   goes to the address. */
+.board-table th:nth-child(1),
+.board-table td:nth-child(1) { padding-right: 4px; }
+.board-table th:nth-child(2),
+.board-table td:nth-child(2) { padding-left: 8px; }
+
 thead th {
   position: sticky;
   top: 0;
@@ -353,16 +371,22 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .addr-cell .locality { color: var(--text-2); font-size: 11.5px; }
 .dim { color: var(--text-3); }
 
-/* type tag */
+/* type tag — a single line that clips rather than wrapping, since the long
+   names ("STRUCTURE/BUILDING/HOUSE FIRE") have no space to break at and would
+   otherwise force the column wide. The colour already carries the category, the
+   first words carry the rest, and the cell's `title` has the full text. */
 .type-tag {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  max-width: 100%;
   padding: 3px 9px;
   border-radius: 4px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
   line-height: 1.6;
 }
 .type-tag.fire    { background: var(--tag-fire-bg);    color: var(--tag-fire-text); }

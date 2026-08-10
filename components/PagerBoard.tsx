@@ -704,14 +704,18 @@ export default function PagerBoard({
 
       {/* table */}
       <div className="list-wrap">
-        <table>
+        {/* Widths are authoritative here (table-layout: fixed in globals.css),
+            so a long incident type can't quietly widen its column at the
+            address's expense. Sized from the real traffic: incident numbers run
+            to 9 characters, and 4 units covers 90% of jobs. */}
+        <table className="board-table">
           <thead>
             <tr>
-              <th style={{ width: 120 }}>Incident</th>
-              <th style={{ width: 60 }}>Time</th>
+              <th style={{ width: 92 }}>Incident</th>
+              <th style={{ width: 66 }}>Time</th>
               <th>Address</th>
-              <th style={{ width: 160 }}>Type</th>
-              <th style={{ width: 240 }}>Call Sign</th>
+              <th style={{ width: 200 }}>Type</th>
+              <th style={{ width: 260 }}>Call Sign</th>
             </tr>
           </thead>
           <tbody>
@@ -765,7 +769,7 @@ export default function PagerBoard({
                       </td>
                       <td>
                         {i.type
-                          ? <span className={`type-tag ${tc}`}>{i.type.toUpperCase()}</span>
+                          ? <span className={`type-tag ${tc}`} title={i.type}>{i.type.toUpperCase()}</span>
                           : <span className="dim">—</span>}
                       </td>
                       <td>
