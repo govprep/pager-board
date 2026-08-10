@@ -463,6 +463,8 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   justify-content: center;
   padding: 24px;
 }
+/* Shared by the incident card and the alert-preferences dialog: content-sized,
+   scrolling as a whole once it runs out of room. */
 .modal {
   background: var(--surface);
   border: 1px solid var(--border-2);
@@ -473,12 +475,23 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
 }
-/* Title row + tab strip travel together as one sticky block, so switching tabs
-   never scrolls the controls out of reach on a long message log. */
+
+/* The incident card is the exception: it has tabs, and the message log is
+   arbitrarily long. A definite height keeps the card the same size whichever
+   tab is open, so a long log scrolls inside it rather than growing it. Sized to
+   fit the details panel (the map is the tall part); `100%` is the overlay's
+   content box, so it shrinks to fit a short window with no second formula to
+   keep in step. */
+.incident-modal {
+  height: min(620px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* Title row + tab strip: fixed at the top, never part of the scroll. */
 .modal-top {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  flex: none;
   background: var(--surface);
   border-bottom: 1px solid var(--border-2);
 }
@@ -562,6 +575,15 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   gap: 18px;
   padding: 18px;
 }
+/* Inside the incident card each tab's panel is the scroll container, not the
+   card. `min-height: 0` because a flex child won't shrink below its content
+   without it, which would push the card open instead of scrolling. Scoped, so
+   the preferences dialog keeps scrolling as one piece. */
+.incident-modal .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
 /* The inactive tab's panel stays mounted (see PagerBoard). Needed explicitly:
    an author `display` beats the browser's own [hidden] rule. */
 .modal-body[hidden] { display: none; }
@@ -595,12 +617,18 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   flex-direction: column;
   gap: 10px;
   padding: 16px 18px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .msg {
   display: flex;
   flex-direction: column;
   gap: 7px;
   padding: 9px 11px;
+  /* Keep each entry at its natural height — a flex column would otherwise
+     squash them all to fit rather than letting the list scroll. */
+  flex: none;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-left: 2px solid var(--accent);
@@ -631,8 +659,14 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 }
 .msg-origin { font-size: 11px; color: var(--text-2); }
 
+/* Loading / empty / error, centred in the panel the list would have filled. */
 .msg-note {
-  padding: 40px 24px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
   text-align: center;
   font-size: 12px;
   color: var(--text-3);
@@ -1110,6 +1144,10 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 
   /* Hide empty-cell placeholders — they'd be stray dots in a stacked card. */
   .list-wrap tr.raw-row td .dim { color: var(--text-3); }
+
+  /* The incident card's height now tracks the overlay's content box, so trimming
+     the padding here is what gives it room on a phone. */
+  .modal-overlay { padding: 12px; }
 
   /* Alert prefs: the topbar wraps to ~2 rows on a phone, so this overlay can't
      sit at a fixed 50px. Cover the whole screen and let the modal use the
