@@ -153,6 +153,29 @@ have overwritten 168 good rows in a two-day sample. It also caught a bug that
 predates it — truncated decodes from rfspager and pagermon (`location: ""`,
 `"RAMSAY RD,FIFT"`) had been quietly blanking good addresses.
 
+### A job that changes after it alerts
+
+Most jobs don't arrive complete. Control pages more brigades to them minutes
+later, and re-types them as the picture firms up — an AFA that turns out to be
+real is re-paged as a structure fire. Both land as *changes to a row already on
+the board*, which is exactly the kind of change someone who has read that row
+will never look at again. So the board points at them:
+
+- **A resource is added** → the row pulses blue twice, slowly, over four seconds
+  (`.unit-added` in `globals.css`, `FLASH_MS` in `components/PagerBoard.tsx`).
+  Blue, because red on this board means a resource has been *stood down*. Only
+  jobs already on screen flash: a job's first page is a whole row appearing, and
+  scrolling older rows into view isn't news either.
+- **The type is updated** → the board follows the latest page that carried a
+  type, not the fullest one. This is the single exception to the rule above:
+  every other field on a merged row comes from whichever page recorded the job
+  most completely (`fullerOf()`), because a thin copy is worse than an old one.
+  For the type that inverts — a stale type is worse than a thin one, since it is
+  what tells someone what they're driving to — and the update typically rides in
+  on a later, thinner page than the rest of the row. `isLaterType()` in
+  `lib/incident-merge.ts` still refuses a blank type, and breaks a same-second
+  tie on length, so a clipped decode can't pass itself off as a re-type.
+
 ## The raw feed (`/raw`)
 
 The board is a *filtered* view: only numbered RFS/FRNSW jobs reach it. SES

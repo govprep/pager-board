@@ -6,7 +6,7 @@ import type { Incident, PagerMessage, RawStatus } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
 import { dedupeMessages } from "@/lib/incident-messages";
-import { fullerOf } from "@/lib/incident-merge";
+import { fullerOf, isLaterType } from "@/lib/incident-merge";
 import { lgaFromLocation, lgaKey } from "@/lib/lga";
 import EnableAlerts from "@/components/EnableAlerts";
 import IncidentMap from "@/components/IncidentMap";
@@ -107,6 +107,12 @@ function splitAddress(loc: string): { street: string; locality: string } {
     locality: parts.slice(1).join(", ").trim(),
   };
 }
+
+// How long a row stays marked as having just gained a resource: two 2s pulses.
+// Kept in step with the `unit-added-pulse` animation in globals.css — the class
+// is dropped on a timer rather than on animationend so it still clears for
+// someone whose reduced-motion setting has turned the animation down.
+const FLASH_MS = 4000;
 
 // How many rows to pull per request. The board loads the newest page first,
 // then fetches older pages on scroll (see the IntersectionObserver below).
@@ -423,6 +429,14 @@ export default function PagerBoard({
   const sentinelRef = useRef<HTMLTableRowElement | null>(null);
 
   useEffect(() => { incidentsRef.current = incidents; }, [incidents]);
+
+  // Rows that have just gained a resource, and the timers that will clear them.
+  // `seenUnits` is the previous pass's {incident -> units} picture, which the
+  // effect below diffs against — null until the first load has been recorded.
+  const [flashing, setFlashing] = useState<Set<string>>(() => new Set());
+  const seenUnitsRef = useRef<Map<string, Set<string>> | null>(null);
+  const flashTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
   // An incident a notification tap asked us to open, held until it lands on the
   // board (the row may not have loaded yet when the deep link / message arrives).
   const [pendingIncidentNo, setPendingIncidentNo] = useState<string | null>(null);
@@ -594,17 +608,27 @@ export default function PagerBoard({
   //
   // The time stays the earliest across the rows — that's when the job started,
   // whichever page happens to describe it best.
+  //
+  // The type is the one exception to "fullest wins": control re-types a job as it
+  // develops (an AFA that turns out to be real is re-paged as a structure fire),
+  // and that update usually rides in on a *later, thinner* page than the one the
+  // rest of the row comes from. So the type is taken from the most recent page
+  // that carried one — see isLaterType().
   const merged = useMemo(() => {
-    const map = new Map<string, { inc: Incident; units: Unit[]; startedAt: string }>();
+    const map = new Map<
+      string,
+      { inc: Incident; units: Unit[]; startedAt: string; typedBy: Incident }
+    >();
     for (const i of filtered) {
       const key = i.incidentNo || i.id;
       let entry = map.get(key);
       if (!entry) {
-        entry = { inc: i, units: [], startedAt: i.receivedAt };
+        entry = { inc: i, units: [], startedAt: i.receivedAt, typedBy: i };
         map.set(key, entry);
       } else {
         entry.inc = fullerOf(entry.inc, i);
         if (i.receivedAt < entry.startedAt) entry.startedAt = i.receivedAt;
+        if (isLaterType(entry.typedBy, i)) entry.typedBy = i;
       }
       for (const name of unitTokens(i.unit)) {
         if (!name) continue;
@@ -613,11 +637,76 @@ export default function PagerBoard({
         else entry.units.push({ name, stopped: i.stoppedAt != null });
       }
     }
-    return [...map.values()].map(({ inc, units, startedAt }) => ({
-      inc: inc.receivedAt === startedAt ? inc : { ...inc, receivedAt: startedAt },
+    return [...map.values()].map(({ inc, units, startedAt, typedBy }) => ({
+      inc:
+        inc.receivedAt === startedAt && inc.type === typedBy.type
+          ? inc
+          : { ...inc, receivedAt: startedAt, type: typedBy.type },
       units,
     }));
   }, [filtered]);
+
+  // ── flash a job that has just gained a resource ──────────────────────────
+  //
+  // A job keeps growing after it alerts: control pages more brigades to it
+  // minutes later, and the only sign on screen is a badge quietly appearing in a
+  // row that's already been read. So the row says so itself — two slow blue
+  // pulses, blue rather than red because it means "there's more of this one",
+  // not "here's a new emergency".
+  //
+  // Diffed against `incidents` rather than `merged`, so typing in the search box
+  // can't read as resources arriving and leaving. A job seen for the first time
+  // never flashes — its first page is a whole row appearing, which is loud
+  // enough — and neither does an older page scrolled into view, since that's a
+  // key we've never held either.
+  useEffect(() => {
+    const next = new Map<string, Set<string>>();
+    for (const i of incidents) {
+      const key = i.incidentNo || i.id;
+      let units = next.get(key);
+      if (!units) next.set(key, (units = new Set()));
+      for (const name of unitTokens(i.unit)) if (name) units.add(name);
+    }
+
+    const prev = seenUnitsRef.current;
+    seenUnitsRef.current = next;
+    if (!prev) return; // first load — nothing to have grown out of
+
+    const grown: string[] = [];
+    for (const [key, units] of next) {
+      const before = prev.get(key);
+      if (!before) continue;
+      for (const name of units) {
+        if (!before.has(name)) { grown.push(key); break; }
+      }
+    }
+    if (!grown.length) return;
+
+    setFlashing((held) => {
+      const updated = new Set(held);
+      for (const key of grown) updated.add(key);
+      return updated;
+    });
+    for (const key of grown) {
+      const timers = flashTimersRef.current;
+      clearTimeout(timers.get(key));
+      timers.set(key, setTimeout(() => {
+        timers.delete(key);
+        setFlashing((held) => {
+          if (!held.has(key)) return held;
+          const updated = new Set(held);
+          updated.delete(key);
+          return updated;
+        });
+      }, FLASH_MS));
+    }
+  }, [incidents]);
+
+  // Timers outlive a refresh but must not outlive the board.
+  useEffect(() => {
+    const timers = flashTimersRef.current;
+    return () => { for (const t of timers.values()) clearTimeout(t); };
+  }, []);
 
   // Once a notification's incident has loaded onto the board, pop its card open.
   useEffect(() => {
@@ -730,7 +819,10 @@ export default function PagerBoard({
                   const { street, locality } = splitAddress(i.location);
                   const key = i.incidentNo || i.id;
                   return (
-                    <tr key={key} className="data-row">
+                    <tr
+                      key={key}
+                      className={`data-row${flashing.has(key) ? " unit-added" : ""}`}
+                    >
                       <td>
                         {i.incidentNo
                           ? <button className="inc-link" onClick={() => setSelected(entry)}>{i.incidentNo}</button>

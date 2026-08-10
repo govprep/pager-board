@@ -70,6 +70,36 @@ export function fullerOf<T extends { location: string; coords: unknown }>(a: T, 
   return a.location.trim().length >= b.location.trim().length ? a : b;
 }
 
+/** A page's type and the time it was sent — all the comparison below looks at. */
+export interface TypedPage {
+  type: string;
+  receivedAt: string;
+}
+
+/**
+ * Is `b` a more current statement of the job's type than `a`?
+ *
+ * A job gets re-typed as it develops: an alarm that turns out to be real is
+ * re-paged as a structure fire, and the brigades already rolling get the new
+ * type on a page of their own. So unlike everything else on the row — where
+ * fullerOf() above keeps the *fullest* page — the type follows the *latest* one,
+ * because a stale type is worse than a thin one. The board is what someone reads
+ * to know what they're going to.
+ *
+ * Two guards, both aimed at copies rather than updates:
+ *   · a blank type never wins — a decode that lost the type isn't a re-type;
+ *   · pages stamped the same time break the tie on length, since that pair is
+ *     one page and a clipped copy of it, not a job changing under us.
+ */
+export function isLaterType(a: TypedPage, b: TypedPage): boolean {
+  const at = a.type.trim();
+  const bt = b.type.trim();
+  if (!bt) return false;
+  if (!at) return true;
+  if (a.receivedAt !== b.receivedAt) return b.receivedAt > a.receivedAt;
+  return bt.length > at.length;
+}
+
 /** A row on its way to `incidents` — the shape both write paths build. */
 export interface IncidentRow extends RowFacts {
   id: string;
