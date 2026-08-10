@@ -113,16 +113,34 @@ export async function pollPagerMonLive(
     return;
   }
 
+  // Open on HTTP long-polling and let Socket.IO upgrade to a WebSocket once
+  // it's connected — the library's own default, and the order matters.
+  //
+  // Pinning this to ["websocket"] (as the original pocsag-only version did)
+  // means a blocked upgrade has nothing to fall back to: every host in front of
+  // these instances is Cloudflare, and a network that won't pass a WSS upgrade
+  // gets `connect error: websocket error` forever instead of a working polling
+  // connection. Long-polling is a little chattier and no less live.
   const socket = io(inst.baseUrl, {
-    transports: ["websocket"],
+    transports: ["polling", "websocket"],
     reconnection: true,
     reconnectionDelay: 5000,
     reconnectionDelayMax: 30_000,
   });
 
   socket.on("connect", () =>
-    console.log(`${tag} connected via Socket.IO${inst.rawOnly ? " — raw feed only" : ""}`),
+    console.log(
+      `${tag} connected via Socket.IO (${socket.io?.engine?.transport?.name ?? "?"})` +
+        (inst.rawOnly ? " — raw feed only" : ""),
+    ),
   );
+  // Which transport won is the first thing you want to know when one host
+  // connects and another doesn't, so log the upgrade too.
+  socket.on("connect", () => {
+    socket.io?.engine?.once?.("upgrade", () =>
+      console.log(`${tag} upgraded to ${socket.io?.engine?.transport?.name}`),
+    );
+  });
   socket.on("disconnect", (reason: string) => console.warn(`${tag} disconnected:`, reason));
   socket.on("connect_error", (err: Error) => console.warn(`${tag} connect error:`, err.message));
 
