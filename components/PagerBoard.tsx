@@ -6,6 +6,7 @@ import type { Incident, PagerMessage, RawStatus } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
 import { dedupeMessages } from "@/lib/incident-messages";
+import { fullerOf } from "@/lib/incident-merge";
 import { lgaFromLocation, lgaKey } from "@/lib/lga";
 import EnableAlerts from "@/components/EnableAlerts";
 import IncidentMap from "@/components/IncidentMap";
@@ -576,24 +577,42 @@ export default function PagerBoard({
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   }, [incidents]);
 
-  // Merge rows that share the same incident number into one display entry. A
-  // row is one {incident, unit}, so its `stoppedAt` belongs to that resource —
+  // Merge rows that share the same incident number into one display entry.
+  //
+  // A row is one {incident, unit}, so its `stoppedAt` belongs to that resource —
   // it colours that badge and leaves the rest of the job alone.
+  //
+  // The job's own details come from its fullest row, not its newest. The rows
+  // disagree about how much of the page they carry: the copy paged to the duty
+  // officer often arrives from a feed that drops the coordinates and truncates
+  // the address at the suburb. Taking the newest meant a job could show no map
+  // pin and a half address while a sibling row had both.
+  //
+  // The time stays the earliest across the rows — that's when the job started,
+  // whichever page happens to describe it best.
   const merged = useMemo(() => {
-    const map = new Map<string, Entry>();
+    const map = new Map<string, { inc: Incident; units: Unit[]; startedAt: string }>();
     for (const i of filtered) {
       const key = i.incidentNo || i.id;
-      if (!map.has(key)) map.set(key, { inc: i, units: [] });
-      const entry = map.get(key)!;
+      let entry = map.get(key);
+      if (!entry) {
+        entry = { inc: i, units: [], startedAt: i.receivedAt };
+        map.set(key, entry);
+      } else {
+        entry.inc = fullerOf(entry.inc, i);
+        if (i.receivedAt < entry.startedAt) entry.startedAt = i.receivedAt;
+      }
       for (const name of unitTokens(i.unit)) {
         if (!name) continue;
         const held = entry.units.find((u) => u.name === name);
         if (held) held.stopped ||= i.stoppedAt != null;
         else entry.units.push({ name, stopped: i.stoppedAt != null });
       }
-      if (i.receivedAt < entry.inc.receivedAt) entry.inc = { ...entry.inc, receivedAt: i.receivedAt };
     }
-    return [...map.values()];
+    return [...map.values()].map(({ inc, units, startedAt }) => ({
+      inc: inc.receivedAt === startedAt ? inc : { ...inc, receivedAt: startedAt },
+      units,
+    }));
   }, [filtered]);
 
   // Once a notification's incident has loaded onto the board, pop its card open.

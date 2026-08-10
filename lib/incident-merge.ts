@@ -45,6 +45,31 @@ export function isWeakerThan(incoming: RowFacts, stored: RowFacts): boolean {
   return losesCoords || losesLga || losesAddress;
 }
 
+/**
+ * Which of two records of the same job carries more of it.
+ *
+ * The floor above decides what may be *written*. This decides what to *show*
+ * when a job's rows disagree — and they routinely do, because a row is one
+ * {incident, unit}: the copy paged to the duty officer often arrives from a feed
+ * that drops the coordinates and truncates the address at the suburb, while the
+ * copy paged to the responding brigade carries both.
+ *
+ * Unlike isWeakerThan() this is a total order — it always names a winner — and
+ * it ranks coordinates above all else, since that is what puts the pin on the
+ * map. It compares whole rows and returns a whole row, so what ends up on screen
+ * always comes from one page rather than being stitched together from several.
+ * Ties keep `a`, so the caller controls the fallback.
+ */
+export function fullerOf<T extends { location: string; coords: unknown }>(a: T, b: T): T {
+  if (!!a.coords !== !!b.coords) return a.coords ? a : b;
+
+  const aHasLga = lgaKeyFromLocation(a.location) !== "";
+  const bHasLga = lgaKeyFromLocation(b.location) !== "";
+  if (aHasLga !== bHasLga) return aHasLga ? a : b;
+
+  return a.location.trim().length >= b.location.trim().length ? a : b;
+}
+
 /** A row on its way to `incidents` — the shape both write paths build. */
 export interface IncidentRow extends RowFacts {
   id: string;
