@@ -354,6 +354,14 @@ const STATIONS: Record<string, string> = {
 // The lookahead stops at the next key so LOC:/INC: never get eaten as numbers.
 const TURNOUT_RE = /\bTURNOUT:\s*([\d\s]+?)(?=\s+(?:LOC|INC):|\s*$)/i;
 
+// The same page laid out with dashes instead of keys, which is how
+// pager-feed.net publishes FRNSW (see parser.ts, layout C):
+//   FRINC: MEDICAL ACCESS EMERGENCY – 234 – INC: 156043
+// This must stay in step with FRINC_DASH_RE there. It matters beyond display:
+// a device subscribed to station 234 matches on what this returns, so missing
+// the layout means those pages silently alert nobody.
+const FRINC_DASH_TURNOUT_RE = /^FRINC:\s*.+?\s+[–—-]\s+(\d{1,4})\s+[–—-]\s+INC:/i;
+
 /** Normalised form of a turnout number — leading zeros stripped ("081" → "81"). */
 export function turnoutKey(turnout: string): string {
   return turnout.trim().replace(/^0+/, "") || turnout.trim();
@@ -366,8 +374,10 @@ export function turnoutKey(turnout: string): string {
  */
 export function frnswTurnouts(line: string): string[] {
   const m = (line ?? "").match(TURNOUT_RE);
-  if (!m) return [];
-  return m[1].trim().split(/\s+/).filter(Boolean);
+  if (m) return m[1].trim().split(/\s+/).filter(Boolean);
+  const dash = (line ?? "").match(FRINC_DASH_TURNOUT_RE);
+  if (dash) return [dash[1]];
+  return [];
 }
 
 /** Every station number we know, ascending — the picker's option list. */

@@ -10,6 +10,12 @@ import { frnswTurnoutLabel } from "./frnsw-stations";
 //
 //  B) Positional (the older "-" delimited form):
 //       2 STSUTTO - 26-118273 - Chimney fire - FIRECALL - 10 NORTH ST,SUTTON,YASS VALLEY (NSW),2620 - [149.255855,-35.158894]
+//
+//  C) FRNSW with dashes instead of keys (pager-feed.net lays them out this way):
+//       FRINC: MEDICAL ACCESS EMERGENCY – 234 – INC: 156043
+//     Carries the same three facts as (A) — type, turnout, incident number —
+//     so it's read into the same shape rather than treated as a separate kind
+//     of page. Sharing the id means a page arriving in both layouts is one row.
 
 const COORDS_RE = /\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]/;
 // Bare "lng,lat" with no brackets — both numbers must have decimal points to
@@ -35,6 +41,45 @@ function parseCoords(line: string): Coords | null {
     }
   }
   return null;
+}
+
+// "FRINC: MEDICAL ACCESS EMERGENCY – 234 – INC: 156043"
+//
+// Anchored on "FRINC:" with the colon, which is what separates this layout from
+// the canonical "FRINC TYPE: … TURNOUT: …" one. Any of en-dash, em-dash or
+// hyphen may separate the fields; the turnout is the only bare number in the
+// middle, and the incident number is whatever follows INC:.
+const FRINC_DASH_RE =
+  /^FRINC:\s*(.+?)\s+[–—-]\s+(\d{1,4})\s+[–—-]\s+INC:\s*(\S+)\s*$/i;
+
+function parseFrincDash(line: string, receivedAt: string): Incident | null {
+  const m = line.match(FRINC_DASH_RE);
+  if (!m) return null;
+
+  const type = m[1].trim();
+  const turnout = m[2];
+  const incRaw = m[3];
+  // Same rule as the canonical form: "155212-09082026" is a number and a date.
+  const incidentNo = incRaw.split("-")[0]?.trim() || incRaw;
+
+  return {
+    // Keyed on the bare turnout, exactly as parseKeyValue does, so this page and
+    // the same page from a source using the canonical layout are one row.
+    id: `${incidentNo}-${turnout}`,
+    incidentNo,
+    type,
+    unit: frnswTurnoutLabel(turnout),
+    // FRNSW pages carry no address in either layout.
+    location: "",
+    coords: null,
+    receivedAt,
+    // Presented as the canonical keys so anything reading `fields` — the board's
+    // detail view included — sees one vocabulary regardless of which layout the
+    // page arrived in.
+    fields: { TYPE: type, TURNOUT: turnout, INC: incRaw },
+    raw: line,
+    stoppedAt: null,
+  };
 }
 
 function parseKeyValue(line: string, receivedAt: string): Incident {
@@ -212,6 +257,10 @@ export function parsePagerMessage(
 ): Incident | null {
   const line = (raw ?? "").trim();
   if (!line) return null;
+  // Before the generic key/value reader — "FRINC:" would satisfy it, and it
+  // would find no TYPE or TURNOUT key to read.
+  const frinc = parseFrincDash(line, receivedAt);
+  if (frinc) return frinc;
   if (/\b[A-Z][A-Z0-9]+\s*:/.test(line)) return parseKeyValue(line, receivedAt);
   if (isSesLine(line)) return parseSes(line, receivedAt);
   return parsePositional(line, receivedAt);

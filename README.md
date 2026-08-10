@@ -57,7 +57,7 @@ saw it.
 | rfspager.app | HTML scrape, 90s | yes |
 | pocsag.net | PagerMon Socket.IO, live | yes |
 | pager.forcequit.xyz | PagerMon Socket.IO, live | yes — **currently blocked**, see below |
-| pager-feed.net | PagerMon Socket.IO, live | yes, except its FRNSW pages |
+| pager-feed.net | PagerMon Socket.IO, live | yes |
 | Telegram group (`TG_SESSION`) | MTProto, live | yes |
 
 The three public instances are all PagerMon, so they share one client
@@ -105,12 +105,22 @@ Those additions are quiet by design: `feeder/push.ts` skips unit-additions to an
 incident that has already alerted, and Slack posts them as replies inside the
 job's existing thread.
 
-**Its FRNSW pages stay off the board.** They arrive as
-`FRINC: TREE DOWN - 083 - INC: 155945` rather than the `TURNOUT:`/`INC:` form
-the parser reads, so they'd land with no type and no unit — and carrying no
-turnout, they'd never match a device that picked FRNSW stations. pocsag and
-pagermon already carry FRNSW properly. That bar is one predicate on the
-instance (`barFromBoard`); the lines are still recorded on `/raw`.
+**Its FRNSW pages** arrive laid out with dashes instead of keys:
+
+```
+FRINC: MEDICAL ACCESS EMERGENCY - 234 - INC: 156043
+```
+
+Same three facts as the canonical form, so `lib/parser.ts` reads it as layout C
+rather than treating it as a different kind of page: type, turnout, incident
+number. It keys on the bare turnout exactly as the canonical reader does, so a
+page arriving in both layouts is **one row, not two**, and the number resolves
+through the usual station index — `234` displays as `234 BOWRAL`.
+
+`frnswTurnouts()` in `lib/frnsw-stations.ts` has to know the layout too, and its
+regex must stay in step with the parser's. That one isn't cosmetic: a device
+subscribed to station 234 matches on what it returns, so a layout it can't read
+is a page that silently alerts nobody.
 
 What it can't offer: its RFS pages have no coordinates and no LGA. For an extra
 unit on a job that's already known this doesn't bite, because `mergeAlertKeys`

@@ -57,16 +57,12 @@ export const PUBLIC_INSTANCES: LiveInstance[] = [
   // that would cost a stored row its coordinates or its LGA. Without that guard
   // this instance would have overwritten 168 good rows in the same sample.
   //
-  // FRNSW stays barred. Those pages arrive as
-  // "FRINC: TREE DOWN – 083 – INC: 155945" rather than the TURNOUT:/INC: form
-  // the parser reads, so they'd land with no type and no unit — and with no
-  // turnout, no device that picked FRNSW stations would match them. pocsag and
-  // pagermon already carry FRNSW properly, so there's nothing to recover.
-  {
-    label: "pager-feed",
-    baseUrl: "https://pager-feed.net",
-    barFromBoard: (raw) => /\bFRINC\b/i.test(raw),
-  },
+  // Its FRNSW pages come laid out with dashes rather than keys —
+  // "FRINC: MEDICAL ACCESS EMERGENCY – 234 – INC: 156043" — which the parser
+  // now reads as layout C, keyed on the turnout exactly as the canonical form
+  // is. Station numbers resolve through the same index, so 234 shows as
+  // "234 BOWRAL" and a device subscribed to 234 matches it.
+  { label: "pager-feed", baseUrl: "https://pager-feed.net" },
 ];
 
 /** Subscribe to every public instance. Each reconnects independently. */
