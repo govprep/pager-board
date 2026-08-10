@@ -310,7 +310,11 @@ function IncidentModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal incident-modal" onClick={e => e.stopPropagation()}>
+      {/* The fixed height applies only on the message log — see globals.css. */}
+      <div
+        className={`modal incident-modal${tab === "messages" ? " on-messages" : ""}`}
+        onClick={e => e.stopPropagation()}
+      >
         <div className="modal-top">
           <div className="modal-head">
             <div className="modal-inc-group">

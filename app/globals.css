@@ -476,22 +476,30 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
 }
 
-/* The incident card is the exception: it has tabs, and the message log is
-   arbitrarily long. A definite height keeps the card the same size whichever
-   tab is open, so a long log scrolls inside it rather than growing it. Sized to
-   fit the details panel (the map is the tall part); `100%` is the overlay's
-   content box, so it shrinks to fit a short window with no second formula to
-   keep in step. */
+/* The incident card has tabs. On Details it behaves like any other modal —
+   sized by its content, no scrollbar of its own — and only falls back to
+   scrolling as a whole if a short window can't fit it. */
 .incident-modal {
-  height: min(620px, 100%);
   max-height: 100%;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+}
+
+/* The message log is the exception: it's arbitrarily long, so on that tab the
+   card takes a definite height and the log scrolls inside it. `100%` is the
+   overlay's content box, so it still shrinks to fit a short window. */
+.incident-modal.on-messages {
+  height: min(620px, 100%);
   overflow: hidden;
 }
-/* Title row + tab strip: fixed at the top, never part of the scroll. */
+
+/* Title row + tab strip stay put either way. */
 .modal-top {
   flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: var(--surface);
   border-bottom: 1px solid var(--border-2);
 }
@@ -575,15 +583,9 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   gap: 18px;
   padding: 18px;
 }
-/* Inside the incident card each tab's panel is the scroll container, not the
-   card. `min-height: 0` because a flex child won't shrink below its content
-   without it, which would push the card open instead of scrolling. Scoped, so
-   the preferences dialog keeps scrolling as one piece. */
-.incident-modal .modal-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-}
+/* The details panel is never its own scroll container — it sets the card's
+   height, so it always shows in full. */
+.incident-modal .modal-body { flex: none; }
 /* The inactive tab's panel stays mounted (see PagerBoard). Needed explicitly:
    an author `display` beats the browser's own [hidden] rule. */
 .modal-body[hidden] { display: none; }
