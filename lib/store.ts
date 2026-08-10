@@ -1,6 +1,6 @@
 import type { Incident, PagerMessage, RawStatus } from "./types";
 import { parsePagerMessage, hasIncidentNumber } from "./parser";
-import { standDownIncidentNo } from "./standdown";
+import { parseStandDown, applyStandDowns, type StandDown } from "./standdown";
 import { passesBoardFilter } from "./filter";
 import { recordRawMessages } from "./raw-feed";
 import { collapseById, dropWeakerThanStored, type IncidentRow } from "./incident-merge";
@@ -89,18 +89,19 @@ export async function addRawMessages(input: string | string[]): Promise<Incident
   lines = lines.filter(passesBoardFilter);
   if (lines.length === 0) return [];
 
-  // Stand-down notices (STOP/STAND DOWN/NNTA) flag an existing incident rather
-  // than being stored as a page of their own — pull them out first so they
-  // never reach the parser (which would otherwise read "STOP" as a real
-  // TYPE/location update and clobber the incident it refers to on upsert).
-  const standDownNos = new Set<string>();
+  // Stand-down notices (STOP/STAND DOWN/NNTA) cancel resources on an existing
+  // incident rather than being stored as a page of their own — pull them out
+  // first so they never reach the parser (which would otherwise read "STOP" as
+  // a real TYPE/location update and clobber the incident it refers to on
+  // upsert).
+  const standDowns = new Map<string, StandDown>();
   const normalLines: string[] = [];
   for (const line of lines) {
-    const no = standDownIncidentNo(line);
-    if (no) standDownNos.add(no);
+    const sd = parseStandDown(line);
+    if (sd) standDowns.set(line.replace(/\s+/g, " ").trim(), sd);
     else normalLines.push(line);
   }
-  if (standDownNos.size) await applyStandDowns([...standDownNos]);
+  await applyStandDowns(supabase, [...standDowns.values()], "api");
 
   const parsed: Incident[] = [];
   for (const line of normalLines) {
@@ -141,15 +142,6 @@ export async function addRawMessages(input: string | string[]): Promise<Incident
     .select();
   if (error) throw new Error(error.message);
   return (data ?? []).map(toIncident);
-}
-
-/** Stamp `stopped_at` on every row of the given incident numbers. */
-async function applyStandDowns(incidentNos: string[]): Promise<void> {
-  const { error } = await supabase
-    .from("incidents")
-    .update({ stopped_at: new Date().toISOString() })
-    .in("incident_no", incidentNos);
-  if (error) throw new Error(error.message);
 }
 
 // ---------------------------------------------------------------------------

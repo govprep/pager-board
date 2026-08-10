@@ -32,6 +32,11 @@
   --badge-text: #e5e5e5;
   --badge-border: rgba(255,255,255,0.15);
 
+  /* …and the same badge once that resource has been stood down */
+  --badge-stopped-bg:     #4c1111;
+  --badge-stopped-text:   #fca5a5;
+  --badge-stopped-border: #b91c1c;
+
   --btn:        #1d4ed8;
   --btn-reset:  #292929;
 
@@ -299,25 +304,7 @@ tr.date-row td {
 
 tbody tr.data-row { border-bottom: 1px solid var(--border); }
 tbody tr.data-row:hover { background: var(--surface-2); }
-tbody tr.data-row.stopped { background: rgba(127, 29, 29, 0.12); }
-tbody tr.data-row.stopped:hover { background: rgba(127, 29, 29, 0.2); }
 tbody td { padding: 10px 14px; vertical-align: middle; }
-
-/* stand-down flag (STOP / STAND DOWN / NNTA received for this incident) */
-.stop-flag {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  margin-left: 8px;
-  border-radius: 4px;
-  background: #7f1d1d;
-  color: #fca5a5;
-  border: 1px solid #b91c1c;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-}
 
 /* incident number */
 .inc-link {
@@ -400,6 +387,18 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   font-weight: 700;
   letter-spacing: 0.06em;
   white-space: nowrap;
+}
+/* A resource a stand-down has cancelled. Control stands brigades down one at a
+   time while the rest keep working, so this marks the resource rather than the
+   incident. Struck through as well as recoloured — the state has to survive a
+   glance from someone who reads red as "urgent" on a fire board. */
+.badge.stopped {
+  background: var(--badge-stopped-bg);
+  border-color: var(--badge-stopped-border);
+  color: var(--badge-stopped-text);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(252, 165, 165, 0.6);
 }
 
 /* status */

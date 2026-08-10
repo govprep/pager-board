@@ -121,10 +121,22 @@ function mergeById(...lists: Incident[][]): Incident[] {
   );
 }
 
-type Entry = { inc: Incident; units: string[]; stopped: boolean };
+// One resource paged to a job. `stopped` marks the ones a stand-down has since
+// cancelled — control routinely stands some brigades down while the rest keep
+// working, so this is per-resource rather than per-incident.
+type Unit = { name: string; stopped: boolean };
 
-function StopFlag() {
-  return <span className="stop-flag" title="Stand-down received for this incident">STOP</span>;
+type Entry = { inc: Incident; units: Unit[] };
+
+function UnitBadge({ unit }: { unit: Unit }) {
+  return (
+    <span
+      className={`badge${unit.stopped ? " stopped" : ""}`}
+      title={unit.stopped ? "Stood down — stand-down received for this resource" : undefined}
+    >
+      {unit.name}
+    </span>
+  );
 }
 
 // Per-incident "Follow updates" toggle. Subscribing enables device push (if it
@@ -250,7 +262,7 @@ function IncidentModal({
   getToken: () => string | null;
   onClose: () => void;
 }) {
-  const { inc, units, stopped } = entry;
+  const { inc, units } = entry;
   const [tab, setTab] = useState<ModalTab>("details");
   const [messages, setMessages] = useState<MessagesState>({ phase: "loading" });
 
@@ -302,7 +314,6 @@ function IncidentModal({
           <div className="modal-head">
             <div className="modal-inc-group">
               <span className="modal-inc">{inc.incidentNo || "Incident"}</span>
-              {stopped && <StopFlag />}
             </div>
             <div className="modal-head-actions">
               {inc.incidentNo && <FollowButton incidentNo={inc.incidentNo} />}
@@ -367,7 +378,7 @@ function IncidentModal({
             <span className="modal-label">Resources Paged</span>
             <div className="cs-cell">
               {units.length > 0
-                ? units.map(u => <span key={u} className="badge">{u}</span>)
+                ? units.map(u => <UnitBadge key={u.name} unit={u} />)
                 : <span className="dim">—</span>}
             </div>
           </div>
@@ -565,17 +576,21 @@ export default function PagerBoard({
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   }, [incidents]);
 
-  // Merge rows that share the same incident number into one display entry.
+  // Merge rows that share the same incident number into one display entry. A
+  // row is one {incident, unit}, so its `stoppedAt` belongs to that resource —
+  // it colours that badge and leaves the rest of the job alone.
   const merged = useMemo(() => {
     const map = new Map<string, Entry>();
     for (const i of filtered) {
       const key = i.incidentNo || i.id;
-      if (!map.has(key)) map.set(key, { inc: i, units: [], stopped: false });
+      if (!map.has(key)) map.set(key, { inc: i, units: [] });
       const entry = map.get(key)!;
-      for (const u of unitTokens(i.unit)) {
-        if (u && !entry.units.includes(u)) entry.units.push(u);
+      for (const name of unitTokens(i.unit)) {
+        if (!name) continue;
+        const held = entry.units.find((u) => u.name === name);
+        if (held) held.stopped ||= i.stoppedAt != null;
+        else entry.units.push({ name, stopped: i.stoppedAt != null });
       }
-      if (i.stoppedAt) entry.stopped = true;
       if (i.receivedAt < entry.inc.receivedAt) entry.inc = { ...entry.inc, receivedAt: i.receivedAt };
     }
     return [...map.values()];
@@ -683,17 +698,16 @@ export default function PagerBoard({
                   <td colSpan={5}>{date}</td>
                 </tr>
                 {rows.map((entry) => {
-                  const { inc: i, units, stopped } = entry;
+                  const { inc: i, units } = entry;
                   const tc = typeClass(i.type);
                   const { street, locality } = splitAddress(i.location);
                   const key = i.incidentNo || i.id;
                   return (
-                    <tr key={key} className={`data-row${stopped ? " stopped" : ""}`}>
+                    <tr key={key} className="data-row">
                       <td>
                         {i.incidentNo
                           ? <button className="inc-link" onClick={() => setSelected(entry)}>{i.incidentNo}</button>
                           : <span className="dim">—</span>}
-                        {stopped && <StopFlag />}
                       </td>
                       <td>
                         <span className="time-cell">{fmt(i.receivedAt)}</span>
@@ -734,7 +748,7 @@ export default function PagerBoard({
                       <td>
                         <div className="cs-cell">
                           {units.length > 0
-                            ? units.map(u => <span key={u} className="badge">{u}</span>)
+                            ? units.map(u => <UnitBadge key={u.name} unit={u} />)
                             : <span className="dim">—</span>}
                         </div>
                       </td>

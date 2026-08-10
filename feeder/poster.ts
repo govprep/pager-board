@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parsePagerMessage, hasIncidentNumber } from "../lib/parser";
-import { standDownIncidentNo } from "../lib/standdown";
+import { parseStandDown, applyStandDowns, type StandDown } from "../lib/standdown";
 import { passesBoardFilter } from "../lib/filter";
 import { recordRawMessages } from "../lib/raw-feed";
 import { collapseById, dropWeakerThanStored, type IncidentRow } from "../lib/incident-merge";
@@ -79,26 +79,21 @@ export function makeWriter(): Writer {
     lines = lines.filter((l) => l.boardEligible !== false && passesBoardFilter(l.raw));
     if (!lines.length) return;
 
-    // Stand-down notices (STOP/STAND DOWN/NNTA) flag an existing incident
-    // rather than being parsed as a page of their own — pull them out first so
-    // they never reach parsePagerMessage (which would otherwise read "STOP" as
-    // a real TYPE/location update and clobber the incident it refers to on
-    // upsert).
-    const standDownNos = new Set<string>();
+    // Stand-down notices (STOP/STAND DOWN/NNTA) cancel resources on an existing
+    // incident rather than being parsed as a page of their own — pull them out
+    // first so they never reach parsePagerMessage (which would otherwise read
+    // "STOP" as a real TYPE/location update and clobber the incident it refers
+    // to on upsert). Deduplicated by line, since the same notice reaches several
+    // sources; two notices naming different brigades are both kept.
+    const standDowns = new Map<string, StandDown>();
     const normalLines: PagerLine[] = [];
     for (const line of lines) {
-      const no = standDownIncidentNo(line.raw);
-      if (no) standDownNos.add(no);
+      const sd = parseStandDown(line.raw);
+      if (sd) standDowns.set(line.raw.replace(/\s+/g, " ").trim(), sd);
       else normalLines.push(line);
     }
-    if (standDownNos.size) {
-      const { error } = await db
-        .from("incidents")
-        .update({ stopped_at: new Date().toISOString() })
-        .in("incident_no", [...standDownNos]);
-      if (error) console.error(`[${source}] stand-down update:`, error.message);
-      else console.log(`[${source}] stood down ${standDownNos.size} incident(s)`);
-    }
+    await applyStandDowns(db, [...standDowns.values()], source);
+
     lines = normalLines;
     if (!lines.length) return;
 
