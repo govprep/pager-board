@@ -2,9 +2,10 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import type { Incident } from "@/lib/types";
+import type { Incident, PagerMessage, RawStatus } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { hasIncidentNumber } from "@/lib/parser";
+import { dedupeMessages } from "@/lib/incident-messages";
 import { lgaFromLocation, lgaKey } from "@/lib/lga";
 import EnableAlerts from "@/components/EnableAlerts";
 import IncidentMap from "@/components/IncidentMap";
@@ -25,6 +26,13 @@ function dateKey(iso: string): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// "09/08 14:32:07" — a job's pages can straddle midnight, so the per-incident
+// message log carries the date as well as the clock time.
+function fmtStamp(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} ${fmt(iso, true)}`;
 }
 
 function typeClass(type: string): string {
@@ -171,8 +179,80 @@ function FollowButton({ incidentNo }: { incidentNo: string }) {
   );
 }
 
-function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }) {
+// ── per-incident message log ───────────────────────────────────────────────
+// Every pager line the pipeline tied to this incident number: the first page,
+// each re-page to another brigade, and the stand-down.
+
+// Only the exceptions are labelled — "on board" is the expected outcome, so
+// tagging every line with it would bury the ones worth noticing.
+const MSG_STATUS_TAG: Partial<Record<RawStatus, string>> = {
+  standdown: "STAND DOWN",
+  dropped: "DROPPED",
+};
+
+type MessagesState =
+  | { phase: "loading" }
+  | { phase: "error" }
+  | { phase: "ready"; rows: PagerMessage[] };
+
+function IncidentMessages({ state }: { state: MessagesState }) {
+  if (state.phase === "loading") {
+    return <div className="msg-note">Loading messages…</div>;
+  }
+  if (state.phase === "error") {
+    return <div className="msg-note">Couldn&apos;t load the messages for this incident.</div>;
+  }
+  if (state.rows.length === 0) {
+    return (
+      <div className="msg-note">
+        No pager messages recorded for this incident.
+      </div>
+    );
+  }
+
+  return (
+    <ol className="msg-list">
+      {state.rows.map((m) => (
+        <li key={m.hash} className={`msg ${m.status}`}>
+          <div className="msg-meta">
+            <span className="msg-time">{fmtStamp(m.receivedAt)}</span>
+            {MSG_STATUS_TAG[m.status] && (
+              <span className={`raw-status ${m.status}`}>{MSG_STATUS_TAG[m.status]}</span>
+            )}
+            {m.origin && <span className="msg-origin">{m.origin}</span>}
+            {m.agency && <span className="agency-tag">{m.agency}</span>}
+            <span className="msg-spacer" />
+            {m.sources.map((s) => <span key={s} className="badge">{s}</span>)}
+            {m.seenCount > 1 && (
+              <span
+                className="seen-count"
+                title={`Reported ${m.seenCount} times — last at ${fmt(m.lastSeenAt, true)}`}
+              >
+                ×{m.seenCount}
+              </span>
+            )}
+          </div>
+          <div className="raw-line">{m.raw}</div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+type ModalTab = "details" | "messages";
+
+function IncidentModal({
+  entry,
+  getToken,
+  onClose,
+}: {
+  entry: Entry;
+  getToken: () => string | null;
+  onClose: () => void;
+}) {
   const { inc, units, stopped } = entry;
+  const [tab, setTab] = useState<ModalTab>("details");
+  const [messages, setMessages] = useState<MessagesState>({ phase: "loading" });
 
   // Close on Escape.
   useEffect(() => {
@@ -181,21 +261,83 @@ function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Pulled as soon as the card opens rather than when the tab is picked, so the
+  // tab can show how many pages this job has before you go looking.
+  useEffect(() => {
+    if (!inc.incidentNo) {
+      setMessages({ phase: "ready", rows: [] });
+      return;
+    }
+    let active = true;
+    setMessages({ phase: "loading" });
+    (async () => {
+      try {
+        const token = getToken();
+        const params = new URLSearchParams({ incidentNo: inc.incidentNo, limit: "200" });
+        const res = await fetch(`/api/raw?${params}`, {
+          cache: "no-store",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        if (!active) return;
+        setMessages({
+          phase: "ready",
+          rows: dedupeMessages(Array.isArray(data.messages) ? data.messages : []),
+        });
+      } catch {
+        if (active) setMessages({ phase: "error" });
+      }
+    })();
+    return () => { active = false; };
+  // getToken is a fresh closure on every parent render; re-running on it would
+  // refetch for nothing.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inc.incidentNo]);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-head">
-          <div className="modal-inc-group">
-            <span className="modal-inc">{inc.incidentNo || "Incident"}</span>
-            {stopped && <StopFlag />}
+        <div className="modal-top">
+          <div className="modal-head">
+            <div className="modal-inc-group">
+              <span className="modal-inc">{inc.incidentNo || "Incident"}</span>
+              {stopped && <StopFlag />}
+            </div>
+            <div className="modal-head-actions">
+              {inc.incidentNo && <FollowButton incidentNo={inc.incidentNo} />}
+              <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+            </div>
           </div>
-          <div className="modal-head-actions">
-            {inc.incidentNo && <FollowButton incidentNo={inc.incidentNo} />}
-            <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+
+          <div className="modal-tabs" role="tablist">
+            <button
+              role="tab"
+              aria-selected={tab === "details"}
+              className={`modal-tab${tab === "details" ? " on" : ""}`}
+              onClick={() => setTab("details")}
+            >
+              Details
+            </button>
+            <button
+              role="tab"
+              aria-selected={tab === "messages"}
+              className={`modal-tab${tab === "messages" ? " on" : ""}`}
+              onClick={() => setTab("messages")}
+            >
+              Messages
+              {messages.phase === "ready" && messages.rows.length > 0 && (
+                <span className="modal-tab-count">{messages.rows.length}</span>
+              )}
+            </button>
           </div>
         </div>
 
-        <div className="modal-body">
+        {/* Hidden rather than unmounted: tearing the details panel down would
+            take the Mapbox instance with it, so every trip back to this tab
+            would re-geocode the address and rebuild the map from scratch,
+            losing whatever the user had panned or zoomed to. */}
+        <div className="modal-body" hidden={tab !== "details"}>
           <div className="modal-field">
             <span className="modal-label">Incident Type</span>
             {inc.type
@@ -205,22 +347,24 @@ function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }
 
           <div className="modal-field">
             <span className="modal-label">Address</span>
-            <span className="modal-value">{inc.location || <span className="dim">—</span>}</span>
-            {inc.coords && (
-              <a
-                className="map-link"
-                href={googleMapsHref(inc.coords)}
-                onClick={(e) => openInMaps(e, inc.coords!)}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                ↗ Maps
-              </a>
-            )}
+            <div className="addr-cell">
+              <span className="modal-value">{inc.location || <span className="dim">—</span>}</span>
+              {inc.coords && (
+                <a
+                  className="map-link"
+                  href={googleMapsHref(inc.coords)}
+                  onClick={(e) => openInMaps(e, inc.coords!)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  ↗ Maps
+                </a>
+              )}
+            </div>
           </div>
 
           <div className="modal-field">
-            <span className="modal-label">Resources Assigned</span>
+            <span className="modal-label">Resources Paged</span>
             <div className="cs-cell">
               {units.length > 0
                 ? units.map(u => <span key={u} className="badge">{u}</span>)
@@ -235,6 +379,8 @@ function IncidentModal({ entry, onClose }: { entry: Entry; onClose: () => void }
             </div>
           )}
         </div>
+
+        {tab === "messages" && <IncidentMessages state={messages} />}
       </div>
     </div>
   );
@@ -554,14 +700,19 @@ export default function PagerBoard({
                       </td>
                       <td>
                         <div className="addr-cell">
-                          {i.location ? (
-                            <>
-                              <span className="street">{street || i.location}</span>
-                              {locality && <span className="locality">{locality}</span>}
-                            </>
-                          ) : (
-                            <span className="dim">—</span>
-                          )}
+                          {/* Text and the Maps chip are siblings so the chip can
+                              hold the right-hand end of the cell — otherwise a
+                              long address pushes it onto a line of its own. */}
+                          <div className="addr-text">
+                            {i.location ? (
+                              <>
+                                <span className="street">{street || i.location}</span>
+                                {locality && <span className="locality">{locality}</span>}
+                              </>
+                            ) : (
+                              <span className="dim">—</span>
+                            )}
+                          </div>
                           {i.coords && (
                             <a
                               className="map-link"
@@ -608,7 +759,11 @@ export default function PagerBoard({
       </div>
 
       {selected && (
-        <IncidentModal entry={selected} onClose={() => setSelected(null)} />
+        <IncidentModal
+          entry={selected}
+          getToken={getToken}
+          onClose={() => setSelected(null)}
+        />
       )}
     </div>
   );

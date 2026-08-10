@@ -254,6 +254,12 @@ create index if not exists pager_messages_received_at_idx
 create index if not exists pager_messages_status_idx
   on public.pager_messages (status);
 
+-- The Messages tab on the board's incident card pulls every line of one job.
+-- Partial: most rows carry no number, and none of those are ever looked up.
+create index if not exists pager_messages_incident_no_idx
+  on public.pager_messages (incident_no)
+  where incident_no is not null;
+
 -- Added after the first release, so existing installs get them too.
 alter table public.pager_messages add column if not exists capcode text;
 alter table public.pager_messages add column if not exists agency  text;

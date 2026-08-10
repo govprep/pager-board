@@ -343,8 +343,25 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   white-space: nowrap;
 }
 
-/* address */
-.addr-cell { line-height: 1.5; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; }
+/* address — text on the left, Maps chip holding the right-hand end. The chip is
+   a fixed-size sibling of the text rather than another wrapping word, so a long
+   address wraps inside its own block and never pushes the chip onto its own
+   line (which is what a narrow window and every phone used to produce). */
+.addr-cell {
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.addr-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.addr-cell .map-link { margin-left: auto; flex: none; }
 .addr-cell .street { color: var(--text); font-weight: 500; }
 .addr-cell .locality { color: var(--text-2); font-size: 11.5px; }
 .dim { color: var(--text-3); }
@@ -457,14 +474,20 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
 }
+/* Title row + tab strip travel together as one sticky block, so switching tabs
+   never scrolls the controls out of reach on a long message log. */
+.modal-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-2);
+}
 .modal-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 14px 18px;
-  border-bottom: 1px solid var(--border-2);
-  position: sticky;
-  top: 0;
   background: var(--surface);
 }
 .modal-inc-group {
@@ -508,12 +531,41 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   color: #fdba74;
 }
 
+.modal-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+}
+.modal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.modal-tab:hover { color: var(--text-2); }
+.modal-tab.on { color: var(--text); border-bottom-color: var(--text); }
+.modal-tab-count {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
 .modal-body {
   display: flex;
   flex-direction: column;
   gap: 18px;
   padding: 18px;
 }
+/* The inactive tab's panel stays mounted (see PagerBoard). Needed explicitly:
+   an author `display` beats the browser's own [hidden] rule. */
+.modal-body[hidden] { display: none; }
 .modal-field {
   display: flex;
   flex-direction: column;
@@ -532,7 +584,60 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   color: var(--text);
   line-height: 1.5;
 }
-.modal-field .map-link { margin-left: 0; margin-top: 2px; }
+/* The address field is a full-width row inside a column-flex field, so the
+   Maps chip has an edge to sit against. */
+.modal-field .addr-cell { width: 100%; align-items: flex-start; }
+.modal-field .addr-cell .modal-value { flex: 1 1 auto; min-width: 0; }
+
+/* ── incident card: message log ──────────────────────── */
+.msg-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+}
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 6px;
+}
+.msg.standdown {
+  border-left-color: #dc2626;
+  background: rgba(127, 29, 29, 0.12);
+}
+.msg.dropped { border-left-color: var(--text-3); }
+.msg.dropped .raw-line { color: var(--text-2); }
+
+.msg-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* Pushes the sources/repeat count to the right of the meta row. */
+.msg-spacer { flex: 1 1 auto; }
+.msg-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.msg-origin { font-size: 11px; color: var(--text-2); }
+
+.msg-note {
+  padding: 40px 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
 
 .incident-map {
   position: relative;
@@ -966,6 +1071,15 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   .list-wrap tr.data-row td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
   /* Row 3: resources (full width, wrap left-to-right) */
   .list-wrap tr.data-row td:nth-child(5) { grid-column: 1 / -1; grid-row: 3; }
+
+  /* On a phone Maps is a thumb target, not a footnote — the desktop chip is
+     about 20px tall, which is a miss as often as a hit. It still holds the
+     right-hand end of the address row rather than dropping below it. */
+  .addr-cell .map-link {
+    padding: 7px 12px;
+    font-size: 12px;
+    align-self: center;
+  }
 
   /* Raw feed cards. Six columns on desktop collapse to four stacked rows, so
      these override the incident-board placements above. */

@@ -23,6 +23,7 @@ async function isAuthed(req: Request): Promise<boolean> {
 //   beforeHash  hash of that same row                    ┘ the next older page
 //   q           free-text search against the raw line
 //   status      incident | standdown | dropped
+//   incidentNo  every line tied to one incident number (the board's card view)
 export async function GET(req: Request) {
   if (!(await isAuthed(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -39,6 +40,12 @@ export async function GET(req: Request) {
     ? (statusParam as RawStatus)
     : undefined;
 
-  const messages = await listPagerMessages({ limit, before, beforeHash, q, status });
+  // Incident numbers are only ever digits, letters and dashes ("26-118273",
+  // "120047"). Strip anything else so the value can't reshape the PostgREST
+  // filter it's spliced into.
+  const incidentNo =
+    url.searchParams.get("incidentNo")?.replace(/[^A-Za-z0-9-]/g, "").slice(0, 64) || undefined;
+
+  const messages = await listPagerMessages({ limit, before, beforeHash, q, status, incidentNo });
   return NextResponse.json({ messages });
 }
