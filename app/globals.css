@@ -430,27 +430,35 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   text-decoration-color: rgba(252, 165, 165, 0.6);
 }
 
-/* …and a resource that has only just been added to the job. Two 2s pulses —
-   slow enough to read as "one more of these has joined" rather than an alarm,
-   and blue because red on this board means stood down.
+/* …and a resource that has only just been added to the job: two hard blue
+   flashes, blue because red on this board means stood down.
 
-   Deliberately has no 0%/100% frame: the animation starts and ends at whatever
-   the badge already is, so a resource that arrives already stood down pulses
-   from its own red rather than snapping to the plain badge first. Duration is
-   mirrored by FLASH_MS in PagerBoard.tsx, which is what removes the class. */
+   `step-end` is what makes it a flash rather than a glow — the value jumps
+   between the two states and holds, with no fade at either end. Each 600ms
+   iteration is half off and half on, so the badge appears normally, blinks,
+   blinks again and stops: quick enough to catch the eye, slow enough that both
+   blinks register as blinks.
+
+   The keyframe deliberately declares no 0%/100% frame. Those are implicit, and
+   an implicit frame is the badge's *own* styling — so the off half is whatever
+   that badge already looks like, and a resource that arrives already stood down
+   blinks out of its red instead of snapping to the plain badge first.
+
+   Total duration is mirrored by FLASH_MS in PagerBoard.tsx, which removes the
+   class — keep the two in step. */
 @keyframes unit-added-pulse {
-  45% {
+  50% {
     background-color: var(--badge-added-bg);
     border-color: var(--badge-added-border);
     color: var(--badge-added-text);
   }
 }
-.badge.added { animation: unit-added-pulse 2s ease-in-out 2; }
+.badge.added { animation: unit-added-pulse 600ms step-end 2; }
 
 /* Turned down, not off — the badge still has to announce itself, so reduced
-   motion gets one slow fade in and out over the same window. */
+   motion gets a single blink across the same window instead of two. */
 @media (prefers-reduced-motion: reduce) {
-  .badge.added { animation: unit-added-pulse 4s ease-in-out 1; }
+  .badge.added { animation: unit-added-pulse 1200ms step-end 1; }
 }
 
 /* status */

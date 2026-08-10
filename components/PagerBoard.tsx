@@ -108,11 +108,11 @@ function splitAddress(loc: string): { street: string; locality: string } {
   };
 }
 
-// How long a newly added resource's badge stays marked: two 2s pulses. Kept in
-// step with the `unit-added-pulse` animation in globals.css — the class is
+// How long a newly added resource's badge stays marked: two 600ms blinks. Kept
+// in step with the `unit-added-pulse` animation in globals.css — the class is
 // dropped on a timer rather than on animationend so it still clears for someone
 // whose reduced-motion setting has turned the animation down.
-const FLASH_MS = 4000;
+const FLASH_MS = 1200;
 
 // Flashes are tracked per {incident, resource} rather than per incident, since a
 // job can gain one appliance while the six already on it stay put. An incident
@@ -670,9 +670,9 @@ export default function PagerBoard({
   //
   // A job keeps growing after it alerts: control pages more brigades to it
   // minutes later, and the only sign on screen is a badge quietly appearing in a
-  // row that's already been read. So that badge says so itself — two slow blue
-  // pulses, blue rather than red because it means "there's one more of these",
-  // not "here's a new emergency". The pulse is on the badge and not the row
+  // row that's already been read. So that badge says so itself — two hard blue
+  // blinks, blue rather than red because it means "there's one more of these",
+  // not "here's a new emergency". The blink is on the badge and not the row
   // because the row isn't what changed: on a job already running six appliances,
   // what's worth the look is which one just joined them.
   //

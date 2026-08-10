@@ -161,8 +161,8 @@ real is re-paged as a structure fire. Both land as *changes to a row already on
 the board*, which is exactly the kind of change someone who has read that row
 will never look at again. So the board points at them:
 
-- **A resource is added** → *that badge* pulses blue twice, slowly, over four
-  seconds (`.badge.added` in `globals.css`, `FLASH_MS` in
+- **A resource is added** → *that badge* blinks blue twice — hard on, hard off,
+  no fade, 600ms a blink (`.badge.added` in `globals.css`, `FLASH_MS` in
   `components/PagerBoard.tsx`). The badge rather than the row, because the row
   isn't what changed: on a job already running six appliances, what's worth the
   look is which one just joined them. Blue, because red on this board means a
