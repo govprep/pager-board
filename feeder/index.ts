@@ -7,7 +7,9 @@
  * Sources enabled based on env vars present in .env.local:
  *   PAGERMON_URL  → your PagerMon REST API
  *   (always)      → rfspager.app HTML scraper
- *   (always)      → pocsag.net HTML scraper (silently skips if blocked)
+ *   (always)      → the public PagerMon instances in sources/public-pagermon.ts
+ *                   (pocsag.net, pager.forcequit.xyz, pager-feed.net) over
+ *                   Socket.IO — each silently skips if unreachable
  *   TG_SESSION    → Telegram group (also needs TG_API_ID, TG_API_HASH, TG_GROUP)
  */
 
@@ -37,7 +39,7 @@ loadEnvLocal();
 import { makeWriter } from "./poster";
 import { pollPagerMon } from "./sources/pagermon";
 import { pollRfsPager } from "./sources/rfspager";
-import { pollPocsag } from "./sources/pocsag";
+import { pollPublicPagerMons } from "./sources/public-pagermon";
 import { pollTelegram } from "./sources/telegram";
 
 (async () => {
@@ -47,6 +49,6 @@ import { pollTelegram } from "./sources/telegram";
 
   pollPagerMon(post);
   pollRfsPager(post);
-  pollPocsag(post);
+  pollPublicPagerMons(post);
   pollTelegram(post);
 })();

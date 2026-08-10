@@ -44,6 +44,64 @@ curl -X POST http://localhost:3000/api/incidents \
 Accepts `{ "message": "..." }`, `{ "messages": ["...", "..."] }`, or a
 plain-text body with one line per row.
 
+## Where the traffic comes from
+
+`npm run feeder` runs every source at once. They overlap heavily on purpose — a
+page one receiver misses, or decodes badly, usually arrives intact from another,
+and the raw feed collapses the copies into a single row listing each source that
+saw it.
+
+| source | transport | on the board? |
+|---|---|---|
+| your PagerMon (`PAGERMON_URL`) | REST, authenticated, `id` cursor | yes |
+| rfspager.app | HTML scrape, 90s | yes |
+| pocsag.net | PagerMon Socket.IO, live | yes |
+| pager.forcequit.xyz | PagerMon Socket.IO, live | yes |
+| pager-feed.net | PagerMon Socket.IO, live | **raw feed only** |
+| Telegram group (`TG_SESSION`) | MTProto, live | yes |
+
+The three public instances are all PagerMon, so they share one client
+(`feeder/sources/pagermon-live.ts`) and one table of hosts
+(`feeder/sources/public-pagermon.ts`). Adding an instance is a line in that
+table; dropping one is deleting the line.
+
+pager.forcequit.xyz earns its place on receiver coverage: its lines are the same
+full-fidelity decodes as pocsag's (capcode on every message, addresses complete
+with LGA and coordinates), but it listens in the south. In a two-day sample, 33
+of the 57 incident numbers it carried inside the board's window were ones no
+other source had — mostly Illawarra and Shoalhaven, where the rest of the feed
+is thin.
+
+### Why pager-feed.net is recorded but never parsed
+
+It publishes a *tidied* rendering of the traffic rather than the decode. Against
+the same job, the difference is the whole address:
+
+```
+pocsag / rfspager:  VRCESSN391 - 26-123379 - VRA - INDUSTRIAL/DOMESTIC RESCUE -
+                    95 FIGTREE LN,KIAH RD,GILLIESTON HEIGHTS,MAITLAND (LGA),2321
+                    - [151.52509,-32.74652]
+pager-feed.net:     VRCESSN391 - 26-123379 - Industrial/Domestic Rescue -
+                    95 FIGTREE LANE, KIAH ROAD, GILLIESTON HEIGHTS
+```
+
+No call class, no LGA, no postcode, no coordinates; FRNSW pages are re-laid-out
+as `FRINC: TREE DOWN – 083 – INC: 155945`, which the key/value parser reads as a
+job with no type and no turnout at all.
+
+The damage would be silent rather than obvious. The board upserts on
+`{incidentNo}-{unit}`, and this feed reproduces that key exactly, so its copy
+would *overwrite* a good row — taking the map link with it, and dropping the job
+out of the alerts of every device that has narrowed to an LGA. Over a two-day
+sample of 800 of its messages, it produced 425 distinct `{incidentNo}-{unit}`
+keys, and 168 of those were already on the board with a better copy.
+
+And it buys almost nothing: of the 226 incident numbers in that sample that fall
+inside the board's own window, 223 were already there — 3 were new. So it stays
+wired in as corroboration — `boardEligible:
+false`, every line recorded, every line tagged **dropped** on `/raw` — and never
+reaches the parser. To drop it entirely, delete its line from `PUBLIC_INSTANCES`.
+
 ## The raw feed (`/raw`)
 
 The board is a *filtered* view: only numbered RFS/FRNSW jobs reach it. SES
@@ -188,13 +246,23 @@ lib/
   store.ts              ** data-source seam — the one file to change for Supabase **
   supabase.ts           step-by-step notes + table schema
   sample-data.ts        seed lines
+feeder/
+  index.ts              starts every source
+  poster.ts             the one ingest path: record raw, filter, parse, upsert
+  sources/
+    pagermon.ts         your private PagerMon, over the authenticated REST API
+    pagermon-live.ts    ** the PagerMon Socket.IO client every public host shares **
+    public-pagermon.ts  ** the table of public hosts — add/remove one here **
+    rfspager.ts         rfspager.app HTML scraper
+    telegram.ts         a Telegram group
 ```
 
 Ingestion runs in one place: sources hand `feeder/poster.ts` everything they see,
 it records the raw stream first, then applies the board filter. A source only
 overrides that by setting `boardEligible: false` on a line it knows can't be a
-board row (pocsag's `ignore` flag, SES agency traffic, an rfspager row with no
-usable timestamp) — such lines are still recorded, just never parsed.
+board row (PagerMon's `ignore` flag, SES agency traffic, an rfspager row with no
+usable timestamp, anything from a `rawOnly` instance) — such lines are still
+recorded, just never parsed.
 
 ### Moving to Supabase
 
