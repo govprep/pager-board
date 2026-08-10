@@ -39,6 +39,13 @@ export interface LiveInstance {
    */
   rawOnly?: boolean;
   /**
+   * Bar just *some* of this instance's lines from the board, by their text.
+   * Recorded on /raw either way, exactly like `rawOnly` — this is the same
+   * judgement applied at line granularity, for an instance that is trustworthy
+   * on one kind of page and not another.
+   */
+  barFromBoard?: (raw: string) => boolean;
+  /**
    * Why this instance is switched off. Truthy = don't connect at all, just say
    * so once at startup. For a host that can't be reached rather than one we've
    * chosen to distrust — an unreachable source otherwise retries every 30s
@@ -85,12 +92,16 @@ export function toLine(
   const agency = normaliseAgency(msg.agency);
 
   // Everything is recorded in the raw feed — the board filter runs in poster.ts.
-  // Three things still bar a line from the *board*: the instance being raw-only,
-  // PagerMon's own `ignore` flag (an operator having muted that capcode), and the
-  // project-wide rule that SES traffic never reaches the board (the agency field
-  // catches SES pages whose text alone wouldn't give them away).
+  // Four things still bar a line from the *board*: the instance being raw-only,
+  // its own per-line bar, PagerMon's `ignore` flag (an operator having muted
+  // that capcode), and the project-wide rule that SES traffic never reaches the
+  // board (the agency field catches SES pages whose text alone wouldn't give
+  // them away).
   const boardEligible =
-    !inst.rawOnly && !msg.ignore && !/^SES$/i.test(agency ?? "");
+    !inst.rawOnly &&
+    !inst.barFromBoard?.(raw) &&
+    !msg.ignore &&
+    !/^SES$/i.test(agency ?? "");
 
   return {
     raw,

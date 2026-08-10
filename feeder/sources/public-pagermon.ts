@@ -40,26 +40,33 @@ export const PUBLIC_INSTANCES: LiveInstance[] = [
     disabled: "Cloudflare 403s the feeder's IP — needs allowlisting by the host",
   },
 
-  // Raw feed only — deliberately, and not a config we expect to relax.
+  // pager-feed.net publishes a *cleaned-up* rendering rather than the decode:
+  // no call class, job type re-cased, address truncated at the suburb (so no
+  // LGA and no postcode), and no coordinates at all.
   //
-  // pager-feed.net publishes a *cleaned-up* rendering of the traffic rather than
-  // the decode: it drops the call class, rewrites the job type to title case,
-  // truncates the address at the suburb (so no LGA and no postcode), drops the
-  // coordinates entirely, and re-lays FRNSW pages out as
-  // "FRINC: TREE DOWN – 083 – INC: 155945" instead of the "TURNOUT:"/"INC:"
-  // key-value form the parser reads.
+  // It's here for depth rather than breadth. Its receiver hears capcodes the
+  // others don't — duty officers and ops especially (LHDO, CCDO, LHOPS18) — and
+  // because a board row is keyed on {incidentNo}-{unit}, each of those is a row
+  // no other source produces. In a two-day sample it added 80 unit pages to jobs
+  // already on the board, against only 3 incident numbers nobody else had. Those
+  // additions cost nothing in noise: push skips unit-additions to an incident
+  // that has already alerted, and Slack posts them as replies in the job's
+  // existing thread.
   //
-  // That matters because the board upserts on `{incidentNo}-{unit}`, which this
-  // feed reproduces exactly — so a page already on the board from pocsag or
-  // rfspager would be overwritten by a copy with no coordinates and no LGA,
-  // quietly breaking the map link and dropping the incident out of every
-  // area-narrowed device's alerts. Measured against the live board, 168 of the
-  // 425 incidents in a two-day sample would have been overwritten this way.
+  // Its thin addresses are safe here only because poster.ts refuses an upsert
+  // that would cost a stored row its coordinates or its LGA. Without that guard
+  // this instance would have overwritten 168 good rows in the same sample.
   //
-  // It also adds almost nothing: 1% of the incident numbers it carried in that
-  // window were ones no other source had. So we record it — it still corroborates
-  // and it costs nothing to keep watching — and never parse it.
-  { label: "pager-feed", baseUrl: "https://pager-feed.net", rawOnly: true },
+  // FRNSW stays barred. Those pages arrive as
+  // "FRINC: TREE DOWN – 083 – INC: 155945" rather than the TURNOUT:/INC: form
+  // the parser reads, so they'd land with no type and no unit — and with no
+  // turnout, no device that picked FRNSW stations would match them. pocsag and
+  // pagermon already carry FRNSW properly, so there's nothing to recover.
+  {
+    label: "pager-feed",
+    baseUrl: "https://pager-feed.net",
+    barFromBoard: (raw) => /\bFRINC\b/i.test(raw),
+  },
 ];
 
 /** Subscribe to every public instance. Each reconnects independently. */

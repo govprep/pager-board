@@ -57,7 +57,7 @@ saw it.
 | rfspager.app | HTML scrape, 90s | yes |
 | pocsag.net | PagerMon Socket.IO, live | yes |
 | pager.forcequit.xyz | PagerMon Socket.IO, live | yes — **currently blocked**, see below |
-| pager-feed.net | PagerMon Socket.IO, live | **raw feed only** |
+| pager-feed.net | PagerMon Socket.IO, live | yes, except its FRNSW pages |
 | Telegram group (`TG_SESSION`) | MTProto, live | yes |
 
 The three public instances are all PagerMon, so they share one client
@@ -81,7 +81,7 @@ fixes it: the way back is to have the server's IP allowlisted by whoever runs
 the host, then delete the `disabled` line from `PUBLIC_INSTANCES`. Until then it
 logs one line at startup instead of retrying every 30 seconds forever.
 
-### Why pager-feed.net is recorded but never parsed
+### What pager-feed.net is for, and what it isn't
 
 It publishes a *tidied* rendering of the traffic rather than the decode. Against
 the same job, the difference is the whole address:
@@ -94,22 +94,43 @@ pager-feed.net:     VRCESSN391 - 26-123379 - Industrial/Domestic Rescue -
                     95 FIGTREE LANE, KIAH ROAD, GILLIESTON HEIGHTS
 ```
 
-No call class, no LGA, no postcode, no coordinates; FRNSW pages are re-laid-out
-as `FRINC: TREE DOWN – 083 – INC: 155945`, which the key/value parser reads as a
-job with no type and no turnout at all.
+It's here for **depth, not breadth**. Its receiver hears capcodes the others
+don't — duty officers and ops especially (`LHDO`, `CCDO`, `LHOPS18`) — and since
+a board row is keyed on `{incidentNo}-{unit}`, each of those is a row no other
+source produces. Over a two-day sample it added 80 unit pages to jobs already on
+the board, against only 3 incident numbers nobody else had. Judge it on units,
+not incidents; on incidents alone it looks worthless.
 
-The damage would be silent rather than obvious. The board upserts on
-`{incidentNo}-{unit}`, and this feed reproduces that key exactly, so its copy
-would *overwrite* a good row — taking the map link with it, and dropping the job
-out of the alerts of every device that has narrowed to an LGA. Over a two-day
-sample of 800 of its messages, it produced 425 distinct `{incidentNo}-{unit}`
-keys, and 168 of those were already on the board with a better copy.
+Those additions are quiet by design: `feeder/push.ts` skips unit-additions to an
+incident that has already alerted, and Slack posts them as replies inside the
+job's existing thread.
 
-And it buys almost nothing: of the 226 incident numbers in that sample that fall
-inside the board's own window, 223 were already there — 3 were new. So it stays
-wired in as corroboration — `boardEligible:
-false`, every line recorded, every line tagged **dropped** on `/raw` — and never
-reaches the parser. To drop it entirely, delete its line from `PUBLIC_INSTANCES`.
+**Its FRNSW pages stay off the board.** They arrive as
+`FRINC: TREE DOWN - 083 - INC: 155945` rather than the `TURNOUT:`/`INC:` form
+the parser reads, so they'd land with no type and no unit — and carrying no
+turnout, they'd never match a device that picked FRNSW stations. pocsag and
+pagermon already carry FRNSW properly. That bar is one predicate on the
+instance (`barFromBoard`); the lines are still recorded on `/raw`.
+
+What it can't offer: its RFS pages have no coordinates and no LGA. For an extra
+unit on a job that's already known this doesn't bite, because `mergeAlertKeys`
+pools the keys across all of a job's pages, so a sibling page supplies the LGA.
+For the handful of jobs only it sees, it does — no map pin, and invisible to any
+device that has narrowed to an area.
+
+### Never trade a full row for a thin one
+
+Every source writes to the same row for the same page, so the board used to show
+whichever copy landed last. `feeder/poster.ts` now refuses an upsert that would
+cost a stored row either of the two things that carry weight — its coordinates
+(the map pin, the Slack static map) or its LGA (what a narrowed device matches
+on). The losing copy is dropped whole rather than merged field by field, so a
+row never ends up pairing one source's address with another's `raw`.
+
+This is what makes pager-feed safe to parse: without it, that one instance would
+have overwritten 168 good rows in a two-day sample. It also caught a bug that
+predates it — truncated decodes from rfspager and pagermon (`location: ""`,
+`"RAMSAY RD,FIFT"`) had been quietly blanking good addresses.
 
 ## The raw feed (`/raw`)
 
