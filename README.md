@@ -101,9 +101,20 @@ source produces. Over a two-day sample it added 80 unit pages to jobs already on
 the board, against only 3 incident numbers nobody else had. Judge it on units,
 not incidents; on incidents alone it looks worthless.
 
-Those additions are quiet by design: `feeder/push.ts` skips unit-additions to an
-incident that has already alerted, and Slack posts them as replies inside the
-job's existing thread.
+Those additions used to be silent — `feeder/push.ts` skipped any unit-addition to
+an already-alerted incident. Now they carry the response as it builds: a device
+that has **narrowed to areas** starts following every job that alerts it, so the
+appliances assigned after the first page arrive as "CMEASCR1 was added to
+RINGWOOD RD" rather than only appearing on the card. Devices on alert-everything
+are left out — they haven't said what their patch is, and following on their
+behalf would mean every appliance on every job in the state. Slack still posts
+them all as replies inside the job's existing thread.
+
+That is only bearable because this feed's headline strength is also its noise:
+duty officers and ops (`LHDO`, `CCDO`, `SHOPS14`) are paged to nearly everything
+in a zone, and a follow-up naming only those is dropped rather than sent — see
+`lib/units.ts`. The pages are still stored and still shown; they just don't ring.
+The Follow button on the card turns an auto-follow off, and unfollowing sticks.
 
 **Its FRNSW pages** arrive laid out with dashes instead of keys:
 

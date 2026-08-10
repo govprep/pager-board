@@ -49,9 +49,12 @@ export const PUBLIC_INSTANCES: LiveInstance[] = [
   // because a board row is keyed on {incidentNo}-{unit}, each of those is a row
   // no other source produces. In a two-day sample it added 80 unit pages to jobs
   // already on the board, against only 3 incident numbers nobody else had. Those
-  // additions cost nothing in noise: push skips unit-additions to an incident
-  // that has already alerted, and Slack posts them as replies in the job's
-  // existing thread.
+  // additions are now what the follow-up alert is built on: a device alerted to a
+  // new incident auto-follows it, and the appliances that arrive afterwards buzz
+  // it. The duty-officer and ops pages that make this feed distinctive are the
+  // one thing held back — they're paged to nearly everything, so an addition
+  // naming only them is dropped (lib/units.ts). Slack posts them all as replies
+  // in the job's existing thread regardless.
   //
   // Its thin addresses are safe here only because poster.ts refuses an upsert
   // that would cost a stored row its coordinates or its LGA. Without that guard

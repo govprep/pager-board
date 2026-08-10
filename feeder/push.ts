@@ -7,6 +7,7 @@ import {
   wantsIncident,
   type AlertPrefs,
 } from "../lib/alert-prefs";
+import { applianceUnits } from "../lib/units";
 import { friendlyType } from "./type-names";
 
 // Sends web-push notifications to subscribed phones. Two kinds of alert:
@@ -17,11 +18,29 @@ import { friendlyType } from "./type-names";
 //    tailored per agency: RFS pages show the type + address; FRNSW pages
 //    (marked "FRINC") show the type + the initial responding station.
 //
-//  • Unit added → goes only to devices following that incident (from the
-//    incident modal). Fires when a new unit page arrives for an incident number
-//    we've already seen, e.g. "CMEASCR1 was added to RINGWOOD RD". Area
-//    preferences deliberately don't apply here: following one job is an explicit
-//    opt-in, and it's usually a job outside your own patch that you're watching.
+//  • Unit added → goes only to devices following that incident. Fires when a new
+//    unit page arrives for an incident number we've already seen, e.g.
+//    "CMEASCR1 was added to RINGWOOD RD". Area preferences deliberately don't
+//    apply here — a follow is per-incident, and the two ways to acquire one both
+//    already answer the "is this mine?" question:
+//
+//      · the incident modal's Follow button — an explicit opt-in, usually to a
+//        job outside your own patch that you want to watch;
+//      · getting the new-incident alert above, having narrowed to areas — a
+//        device that asked for these LGAs or stations starts following the job,
+//        so the units assigned after the first page land on the same phones
+//        without anyone having to open the card. Unfollowing sticks: auto-follow
+//        runs once, on the alert, and never re-adds.
+//
+//        `alertAll` devices are deliberately left out. They haven't told us what
+//        their patch is, so following on their behalf would mean every appliance
+//        on every job in NSW — a firehose, not a follow-up. They can still tap
+//        Follow on the jobs they care about, and narrowing to an area turns this
+//        on for everything after.
+//
+//    Additions naming only duty officers or ops (SHDO, SHOPS14) are dropped
+//    rather than sent — those capcodes are paged to nearly everything in a zone,
+//    so they'd turn every followed job into a buzzing phone. See lib/units.ts.
 //
 // Self-filters to pages not yet pushed via incidents.pushed_at, so re-upserts of
 // unchanged rows cost nothing and restarts never double-notify. Multiple unit
@@ -43,7 +62,10 @@ function configure(): boolean {
   // Printed once, so a glance at the log says whether the process that's
   // actually sending has the area filter — a feeder started before this shipped
   // keeps running the old code and pushes everything to everyone.
-  console.log(`[push] enabled — area filtering on, ignoring pages older than ${maxAgeMin()} min`);
+  console.log(
+    `[push] enabled — area filtering on, auto-follow on (${followTtlDays()}d), ` +
+      `ignoring pages older than ${maxAgeMin()} min`,
+  );
   return true;
 }
 
@@ -129,6 +151,56 @@ function rowToSub(row: any): SubWithPrefs {
   };
 }
 
+// Auto-follow changes the shape of `incident_subscriptions`: it was a handful of
+// rows a user had tapped Follow on, and it is now roughly devices × incidents —
+// tens of thousands a week, on a table read once per unit page. The rows are also
+// dead almost immediately: a job stops receiving units within hours, long before
+// it leaves the board. So they're swept on a timer, which keeps the lookup small
+// without needing a scheduled job outside the feeder.
+//
+// Manual follows are swept on the same clock. A week-old job isn't getting more
+// appliances, so there is nothing left to deliver on either kind.
+const DEFAULT_FOLLOW_TTL_DAYS = 7;
+const SWEEP_EVERY_MS = 60 * 60_000;
+let lastSweep = 0;
+
+function followTtlDays(): number {
+  const raw = Number(process.env.PUSH_FOLLOW_TTL_DAYS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_FOLLOW_TTL_DAYS;
+}
+
+async function sweepFollows(db: SupabaseClient): Promise<void> {
+  if (Date.now() - lastSweep < SWEEP_EVERY_MS) return;
+  lastSweep = Date.now();
+  const cutoff = new Date(Date.now() - followTtlDays() * 86_400_000).toISOString();
+  const { error } = await db.from("incident_subscriptions").delete().lt("created_at", cutoff);
+  if (error) console.error("[push] sweep follows:", error.message);
+}
+
+/**
+ * Sign the devices an alert just reached up to the incident's later unit pages.
+ *
+ * Best-effort and idempotent: a device that already follows (from the modal, or
+ * from a duplicate alert) upserts onto its own row, and a failure here costs the
+ * follow-ups rather than the alert that was already sent. Incidents with no
+ * number can't be followed — `incident_subscriptions` is keyed on it — and there
+ * is nothing to follow up anyway, since later pages wouldn't group with them.
+ */
+async function autoFollow(
+  db: SupabaseClient,
+  incidentNo: string,
+  subs: DbSubscription[],
+): Promise<void> {
+  if (!incidentNo || !subs.length) return;
+  const { error } = await db
+    .from("incident_subscriptions")
+    .upsert(
+      subs.map((s) => ({ incident_no: incidentNo, endpoint: s.endpoint })),
+      { onConflict: "incident_no,endpoint" },
+    );
+  if (error) console.error("[push] auto-follow:", error.message);
+}
+
 async function sendTo(subs: DbSubscription[], payload: string, dead: string[]): Promise<void> {
   await Promise.all(
     subs.map(async (s) => {
@@ -160,6 +232,8 @@ interface Group {
  */
 export async function pushPending(db: SupabaseClient, ids: string[]): Promise<void> {
   if (!configure() || !ids.length) return;
+
+  await sweepFollows(db);
 
   const { data: rows, error } = await db
     .from("incidents")
@@ -220,6 +294,8 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
   let updateCount = 0;
   let skippedCount = 0; // new incidents nobody's preferences asked for
   let staleCount = 0; // pages too old to be news (backfill / re-scrape)
+  let supportCount = 0; // additions naming only duty officers / ops
+  let followCount = 0; // follows opened for narrowed devices by a new-incident alert
 
   for (const g of groups.values()) {
     const { inc } = g;
@@ -235,7 +311,15 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
     const name = (await friendlyType(inc.type)).toUpperCase();
 
     if (g.incidentNo && known.has(g.incidentNo)) {
-      // Unit added to a known incident → notify only its followers.
+      // Unit added to a known incident → notify only its followers, and only
+      // when an appliance is among the additions. Checked before the lookups so
+      // a duty-officer page costs no queries.
+      const units = applianceUnits(g.incs.map((i) => i.unit));
+      if (!units.length) {
+        supportCount++;
+        continue;
+      }
+
       const { data: follows, error: fErr } = await db
         .from("incident_subscriptions")
         .select("endpoint")
@@ -256,12 +340,11 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
         continue;
       }
 
-      const units = g.incs.map((i) => i.unit).filter(Boolean);
       const verb = units.length > 1 ? "were added to" : "was added to";
       const where = firstLocationName(inc.location) || inc.location || "this incident";
       const payload = JSON.stringify({
         title: `🚒 ${name || "INCIDENT"}`,
-        body: `${units.join(", ") || "A unit"} ${verb} ${where}`,
+        body: `${units.join(", ")} ${verb} ${where}`,
         url: boardUrl(g.incidentNo),
         tag: g.incidentNo,
       });
@@ -293,6 +376,12 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
         tag: groupKey(inc),
       });
       await sendTo(recipients, payload, dead);
+      // Whoever asked for this area now follows the job, so the units assigned
+      // after this first page reach them too. Endpoints the send retired are
+      // pruned below, which cascades these rows away with them.
+      const followers = recipients.filter((s) => !s.prefs.alertAll);
+      await autoFollow(db, g.incidentNo, followers);
+      followCount += followers.length;
     }
   }
 
@@ -309,6 +398,8 @@ export async function pushPending(db: SupabaseClient, ids: string[]): Promise<vo
     else
       console.log(
         `[push] ${newCount} new, ${updateCount} update(s)` +
+          (followCount ? `, ${followCount} auto-follow(s)` : "") +
+          (supportCount ? `, ${supportCount} DO/ops-only addition(s)` : "") +
           (skippedCount ? `, ${skippedCount} outside everyone's areas` : "") +
           (staleCount ? `, ${staleCount} too old to notify` : ""),
       );

@@ -204,10 +204,17 @@ update public.push_subscriptions
 alter table public.incidents
   add column if not exists stopped_at timestamptz;
 
--- One row per (incident, device) the user has chosen to follow from the incident
--- modal. The feeder reads this to know who to notify when a new unit is added to
--- an already-known incident ("CMEASCR1 was added to RINGWOOD RD"). Cascades off
--- push_subscriptions so pruning a dead endpoint clears its follows too.
+-- One row per (incident, device) following a job's later unit pages. The feeder
+-- reads this to know who to notify when a new unit is added to an already-known
+-- incident ("CMEASCR1 was added to RINGWOOD RD"). Cascades off push_subscriptions
+-- so pruning a dead endpoint clears its follows too.
+--
+-- Rows arrive two ways: the incident modal's Follow button, and automatically for
+-- each device a new-incident alert reached that has narrowed to areas
+-- (feeder/push.ts) — never for an alert-everything device, which would follow all
+-- of NSW. That still makes this far bigger than the handful of taps it once held,
+-- so the feeder sweeps rows older than PUSH_FOLLOW_TTL_DAYS (7) hourly — a
+-- week-old job has no more appliances coming.
 create table if not exists public.incident_subscriptions (
   incident_no text        not null,
   endpoint    text        not null references public.push_subscriptions(endpoint) on delete cascade,

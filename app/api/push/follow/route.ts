@@ -9,7 +9,11 @@ interface FollowBody {
 }
 
 // GET /api/push/follow?incidentNo=..&endpoint=..  -> { following: boolean }
-// Lets the modal reflect whether this device already follows the incident.
+// Lets the modal reflect whether this device already follows the incident —
+// including the follows the feeder opens by itself when an incident alerts a
+// device that has narrowed to areas, so an area job opens showing "Following"
+// and the button is there to turn it off. A DELETE sticks: auto-follow runs
+// once, on the alert.
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const incidentNo = searchParams.get("incidentNo");
