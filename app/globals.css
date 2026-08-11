@@ -353,10 +353,16 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   white-space: nowrap;
 }
 
-/* address — text on the left, Maps chip holding the right-hand end. The chip is
-   a fixed-size sibling of the text rather than another wrapping word, so a long
-   address wraps inside its own block and never pushes the chip onto its own
-   line (which is what a narrow window and every phone used to produce). */
+/* address — text, then the Maps chip. The chip is a fixed-size sibling of the
+   text rather than another wrapping word, so a long address wraps inside its
+   own block and never pushes the chip onto its own line (which is what a narrow
+   window and every phone used to produce).
+
+   The text no longer grows to fill the cell: address is the last column and
+   runs to the edge of the window, so a stretched block would leave the chip
+   marooned at the far right of a job whose address ended 700px earlier. It
+   shrinks but doesn't grow, and the chip follows it. Phones re-stretch it
+   below — there the address is a full-width row of its own. */
 .addr-cell {
   line-height: 1.5;
   display: flex;
@@ -368,10 +374,10 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   flex-wrap: wrap;
   align-items: baseline;
   column-gap: 10px;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
-.addr-cell .map-link { margin-left: auto; flex: none; }
+.addr-cell .map-link { margin-left: 0; flex: none; }
 .addr-cell .street { color: var(--text); font-weight: 500; }
 .addr-cell .locality { color: var(--text-2); font-size: 11.5px; }
 .dim { color: var(--text-3); }
@@ -1112,8 +1118,17 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 }
 .prefs-save:disabled { opacity: 0.6; cursor: default; }
 
-/* ── mobile portrait ─────────────────────────────────── */
-@media (max-width: 600px) {
+/* ── phones and narrow windows ───────────────────────────
+   Cards take over at 700px rather than 600px, because between those two the
+   board table can't actually fit: the address column is what's left after the
+   other four, and its content has a floor the column can't go under — the Maps
+   chip is a fixed-size, non-wrapping ~70px. Squeeze the column below that and
+   the whole table pushes past the window, which is what a 601px-wide window
+   used to show (a ~40px horizontal overrun on every row carrying an address).
+   Nothing in that band wants five columns anyway: it's narrow desktop windows,
+   iPad Slide Over, and folded-open phones, all of which read better as cards.
+   Landscape phones (740px+) are comfortably above it and keep the table. */
+@media (max-width: 700px) {
   /* Topbar: wrap so the search drops onto its own full-width row.
      Otherwise the alerts button + clock leave no room and both the
      search and the button get squashed on narrow phones. The spacer
@@ -1158,19 +1173,26 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   .list-wrap tr.data-row:hover { background: var(--surface-2); }
   .list-wrap tr.data-row td { padding: 0; vertical-align: unset; }
 
+  /* The card keeps its reading order — number, time, type, then address, then
+     resources — whatever order the desktop columns are in. Cells are placed by
+     position, so these indices track the <th> order in PagerBoard.tsx:
+     1 incident · 2 time · 3 type · 4 call sign · 5 address. */
   /* Row 1: incident no | time | type (end) */
   .list-wrap tr.data-row td:nth-child(1) { grid-column: 1; grid-row: 1; align-self: center; }
   .list-wrap tr.data-row td:nth-child(2) { grid-column: 2; grid-row: 1; align-self: center; }
-  .list-wrap tr.data-row td:nth-child(4) { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; }
+  .list-wrap tr.data-row td:nth-child(3) { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; }
   /* Row 2: address (full width) */
-  .list-wrap tr.data-row td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
+  .list-wrap tr.data-row td:nth-child(5) { grid-column: 1 / -1; grid-row: 2; }
   /* Row 3: resources (full width, wrap left-to-right) */
-  .list-wrap tr.data-row td:nth-child(5) { grid-column: 1 / -1; grid-row: 3; }
+  .list-wrap tr.data-row td:nth-child(4) { grid-column: 1 / -1; grid-row: 3; }
 
   /* On a phone Maps is a thumb target, not a footnote — the desktop chip is
-     about 20px tall, which is a miss as often as a hit. It still holds the
-     right-hand end of the address row rather than dropping below it. */
+     about 20px tall, which is a miss as often as a hit. Here the address is a
+     full-width row, so the text stretches again and the chip holds its
+     right-hand end rather than dropping below it. */
+  .addr-cell .addr-text { flex: 1 1 auto; }
   .addr-cell .map-link {
+    margin-left: auto;
     padding: 7px 12px;
     font-size: 12px;
     align-self: center;

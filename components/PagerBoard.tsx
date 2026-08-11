@@ -818,15 +818,28 @@ export default function PagerBoard({
         {/* Widths are authoritative here (table-layout: fixed in globals.css),
             so a long incident type can't quietly widen its column at the
             address's expense. Sized from the real traffic: incident numbers run
-            to 9 characters, and 4 units covers 90% of jobs. */}
+            to 9 characters, and 4 units covers 90% of jobs.
+
+            Address is deliberately last, and is the one column left to take
+            whatever is over. Most of the traffic is FRNSW, whose pages carry no
+            address at all — the whole line is
+            "FRINC TYPE: AFA TURNOUT: 66 INC: 156572" — so when Address sat in
+            the middle at full flex it left a void across most of the board
+            while the columns that always have something to say were squeezed
+            against the right edge, wrapping the resources onto three lines.
+            Sitting last, the space it can't use is simply the end of the row.
+
+            Call Sign is a percentage rather than a fixed width so it keeps its
+            share on a laptop instead of collapsing back to a wrapping column;
+            ~32% fits six badges, which covers all but the largest turnouts. */}
         <table className="board-table">
           <thead>
             <tr>
               <th style={{ width: 92 }}>Incident</th>
               <th style={{ width: 66 }}>Time</th>
-              <th>Address</th>
               <th style={{ width: 200 }}>Type</th>
-              <th style={{ width: 260 }}>Call Sign</th>
+              <th style={{ width: "32%" }}>Call Sign</th>
+              <th>Address</th>
             </tr>
           </thead>
           <tbody>
@@ -851,10 +864,33 @@ export default function PagerBoard({
                         <span className="time-cell">{fmt(i.receivedAt)}</span>
                       </td>
                       <td>
+                        {i.type
+                          ? <span className={`type-tag ${tc}`} title={i.type}>{i.type.toUpperCase()}</span>
+                          : <span className="dim">—</span>}
+                      </td>
+                      <td>
+                        <div className="cs-cell">
+                          {units.length > 0
+                            ? units.map(u => (
+                                <UnitBadge
+                                  key={u.name}
+                                  unit={u}
+                                  flash={flashing.has(flashKey(key, u.name))}
+                                />
+                              ))
+                            : <span className="dim">—</span>}
+                        </div>
+                      </td>
+                      <td>
                         <div className="addr-cell">
-                          {/* Text and the Maps chip are siblings so the chip can
-                              hold the right-hand end of the cell — otherwise a
-                              long address pushes it onto a line of its own. */}
+                          {/* Text and the Maps chip are siblings so the chip is
+                              a fixed-size block rather than another wrapping
+                              word — a long address wraps inside its own box
+                              instead of pushing the chip onto a line of its
+                              own. The chip follows the text rather than holding
+                              the far edge: this column now runs to the end of
+                              the window, and pinning it right would strand it
+                              half a screen from the address it belongs to. */}
                           <div className="addr-text">
                             {i.location ? (
                               <>
@@ -876,24 +912,6 @@ export default function PagerBoard({
                               ↗ Maps
                             </a>
                           )}
-                        </div>
-                      </td>
-                      <td>
-                        {i.type
-                          ? <span className={`type-tag ${tc}`} title={i.type}>{i.type.toUpperCase()}</span>
-                          : <span className="dim">—</span>}
-                      </td>
-                      <td>
-                        <div className="cs-cell">
-                          {units.length > 0
-                            ? units.map(u => (
-                                <UnitBadge
-                                  key={u.name}
-                                  unit={u}
-                                  flash={flashing.has(flashKey(key, u.name))}
-                                />
-                              ))
-                            : <span className="dim">—</span>}
                         </div>
                       </td>
                     </tr>
