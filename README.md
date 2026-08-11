@@ -165,14 +165,25 @@ real is re-paged as a structure fire. Both land as *changes to a row already on
 the board*, which is exactly the kind of change someone who has read that row
 will never look at again. So the board points at them:
 
-- **A resource is added** → *that badge* blinks blue twice — hard on, hard off,
-  no fade, 500ms blue with a 300ms gap (`.badge.added` in `globals.css`, `FLASH_MS` in
-  `components/PagerBoard.tsx`). The badge rather than the row, because the row
-  isn't what changed: on a job already running six appliances, what's worth the
-  look is which one just joined them. Blue, because red on this board means a
-  resource has been *stood down*. Only jobs already on screen flash: a job's
-  first page is a whole row appearing, and scrolling older rows into view isn't
-  news either.
+- **Anything about the job changes** → *the row* blinks blue twice — hard on,
+  hard off, no fade, 500ms blue with a 300ms gap (`tr.data-row.changed` in
+  `globals.css`, `FLASH_MS` in `components/PagerBoard.tsx`). A re-type, an address
+  that comes through fuller or corrected, a resource added, a resource stood down:
+  one flash for all of them, and the same one a newly paged job gets, because
+  "this is different from the last time you looked" is a single question and
+  shouldn't need two vocabularies to answer. Blue, because red on this board
+  means a resource has been *stood down*.
+- **A resource is added** → *that badge* blinks too, on the row's beat run
+  backwards: blue while the row is dark, its own colours through the 500ms the
+  row spends blue (`.badge.added`). Being the one thing on the row out of step
+  with it is what makes it findable — on a job already running six appliances,
+  the row says the job changed and the badge says which resource is the change.
+- Changes are diffed against what the board *draws*, not against the rows behind
+  it — a re-type or a fuller address is reconciled across a job's pages, so the
+  diff runs on the merged view (`mergeEntries()`). Two things never flash: a job
+  we've never held unless it was paged in the last ten minutes (scrolling into
+  history also produces unseen jobs), and anything an older page brought with it,
+  which is a page from an hour ago arriving rather than the job moving.
 - **The type is updated** → the board follows the latest page that carried a
   type, not the fullest one. This is the single exception to the rule above:
   every other field on a merged row comes from whichever page recorded the job

@@ -109,14 +109,33 @@ const FLASH_MS = 1600;
 // minutes behind the air — without ever lighting up a backfill.
 const NEW_ROW_MAX_AGE_MS = 10 * 60_000;
 
-// One flash set holds both kinds of mark: a whole job that has just arrived
-// (keyed by the incident key alone) and a resource added to a job already on the
-// board (keyed by both). An incident key never contains a space — it's the
-// incident number, or a row id built from one — so the two can't collide even
-// though unit names have spaces of their own ("428 QUEANBEYAN").
+// One flash map holds every kind of mark: a whole job that has just arrived or
+// just changed (keyed by the incident key alone) and a resource added to a job
+// already on the board (keyed by both). An incident key never contains a space —
+// it's the incident number, or a row id built from one — so the two can't collide
+// even though unit names have spaces of their own ("428 QUEANBEYAN"). The value
+// says which flash it is.
 function flashKey(incidentKey: string, unit: string): string {
   return `${incidentKey} ${unit}`;
 }
+
+// Named for the class each one puts on the element (see globals.css):
+//   "arrived" — a job paged just now, flashing as a whole row.
+//   "changed" — a job already on the board whose details have moved under it: a
+//     re-type, a fuller or corrected address, a resource added or stood down.
+//   "added"   — the resource that joined, flashing counter to its row.
+type FlashKind = "arrived" | "changed" | "added";
+
+// One job as the last diff pass saw it — everything the board draws that can
+// change under it, plus when the job started (which decides whether a job we've
+// never held is news or history scrolling into view).
+type Seen = {
+  units: Set<string>;
+  stopped: Set<string>;
+  type: string;
+  location: string;
+  startedAt: string;
+};
 
 // How many rows to pull per request. The board loads the newest page first,
 // then fetches older pages on scroll (see the IntersectionObserver below).
@@ -151,12 +170,71 @@ function mergeById(...lists: Incident[][]): Incident[] {
 // working, so this is per-resource rather than per-incident.
 type Unit = { name: string; stopped: boolean };
 
-type Entry = { inc: Incident; units: Unit[] };
+// One job as the board shows it: the key it's known by, its fullest details, and
+// every resource paged to it.
+type Entry = { key: string; inc: Incident; units: Unit[] };
+
+// Merge rows that share the same incident number into one display entry.
+//
+// A row is one {incident, unit}, so its `stoppedAt` belongs to that resource —
+// it colours that badge and leaves the rest of the job alone.
+//
+// The job's own details come from its fullest row, not its newest. The rows
+// disagree about how much of the page they carry: the copy paged to the duty
+// officer often arrives from a feed that drops the coordinates and truncates
+// the address at the suburb. Taking the newest meant a job could show no map
+// pin and a half address while a sibling row had both.
+//
+// The time stays the earliest across the rows — that's when the job started,
+// whichever page happens to describe it best.
+//
+// The type is the one exception to "fullest wins": control re-types a job as it
+// develops (an AFA that turns out to be real is re-paged as a structure fire),
+// and that update usually rides in on a *later, thinner* page than the one the
+// rest of the row comes from. So the type is taken from the most recent page
+// that carried one — see isLaterType().
+//
+// Used for what's on screen and, separately, for the change diff below, which
+// has to compare the same picture the board is drawing: a re-typed job and a
+// fuller address both come out of the reconciliation here rather than off any
+// single row.
+function mergeEntries(rows: Incident[]): Entry[] {
+  const map = new Map<
+    string,
+    { key: string; inc: Incident; units: Unit[]; startedAt: string; typedBy: Incident }
+  >();
+  for (const i of rows) {
+    const key = i.incidentNo || i.id;
+    let entry = map.get(key);
+    if (!entry) {
+      entry = { key, inc: i, units: [], startedAt: i.receivedAt, typedBy: i };
+      map.set(key, entry);
+    } else {
+      entry.inc = fullerOf(entry.inc, i);
+      if (i.receivedAt < entry.startedAt) entry.startedAt = i.receivedAt;
+      if (isLaterType(entry.typedBy, i)) entry.typedBy = i;
+    }
+    for (const name of unitTokens(i.unit)) {
+      if (!name) continue;
+      const held = entry.units.find((u) => u.name === name);
+      if (held) held.stopped ||= i.stoppedAt != null;
+      else entry.units.push({ name, stopped: i.stoppedAt != null });
+    }
+  }
+  return [...map.values()].map(({ key, inc, units, startedAt, typedBy }) => ({
+    key,
+    inc:
+      inc.receivedAt === startedAt && inc.type === typedBy.type
+        ? inc
+        : { ...inc, receivedAt: startedAt, type: typedBy.type },
+    units,
+  }));
+}
 
 // `flash` marks a resource that has only just been added to the job (see the
-// diff in PagerBoard below), which pulses this badge rather than the whole row —
-// on a job running six appliances, the row already being there is the point, and
-// what's new is which badge joined it.
+// diff in PagerBoard below). The row flashes for the change as well; this badge
+// blinks counter to it, so on a job already running six appliances the one that
+// just joined is the one thing on the row not doing what the row is doing.
 function UnitBadge({ unit, flash = false }: { unit: Unit; flash?: boolean }) {
   return (
     <span
@@ -504,13 +582,17 @@ export default function PagerBoard({
   useEffect(() => { incidentsRef.current = incidents; }, [incidents]);
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
 
-  // What's currently flashing, and the timers that will clear it. `seenRef` is
-  // the previous pass's picture of the board — which jobs were on it, which
-  // resources each had, and when each was paged — for the effect below to diff
-  // against. Null until the first load has been recorded.
-  const [flashing, setFlashing] = useState<Set<string>>(() => new Set());
-  const seenRef = useRef<Map<string, { units: Set<string>; startedAt: string }> | null>(null);
+  // What's currently flashing and how, and the timers that will clear it.
+  // `seenRef` is the previous pass's picture of the board — which jobs were on
+  // it, what each said, which resources each had and which of those were stood
+  // down — for the effect below to diff against. Null until the first load has
+  // been recorded.
+  const [flashing, setFlashing] = useState<Map<string, FlashKind>>(() => new Map());
+  const seenRef = useRef<Map<string, Seen> | null>(null);
   const flashTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  // Set for the one board change that is never news: the older page a scroll
+  // just pulled in. See the diff effect below.
+  const pagedInRef = useRef(false);
 
   // An incident a notification tap asked us to open, held until it lands on the
   // board (the row may not have loaded yet when the deep link / message arrives).
@@ -649,6 +731,10 @@ export default function PagerBoard({
     setLoadingMore(true);
     const page = await fetchPage(oldest);
     if (page) {
+      // Older pages are history reaching the board, not traffic arriving on it —
+      // told to the flash diff here rather than guessed at there, since a page
+      // this far back can still change what a loaded job says (see the effect).
+      pagedInRef.current = true;
       setIncidents((prev) => mergeById(prev, page));
       if (page.length < PAGE_SIZE) setHasMore(false);
     }
@@ -788,118 +874,90 @@ export default function PagerBoard({
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   }, [incidents]);
 
-  // Merge rows that share the same incident number into one display entry.
-  //
-  // A row is one {incident, unit}, so its `stoppedAt` belongs to that resource —
-  // it colours that badge and leaves the rest of the job alone.
-  //
-  // The job's own details come from its fullest row, not its newest. The rows
-  // disagree about how much of the page they carry: the copy paged to the duty
-  // officer often arrives from a feed that drops the coordinates and truncates
-  // the address at the suburb. Taking the newest meant a job could show no map
-  // pin and a half address while a sibling row had both.
-  //
-  // The time stays the earliest across the rows — that's when the job started,
-  // whichever page happens to describe it best.
-  //
-  // The type is the one exception to "fullest wins": control re-types a job as it
-  // develops (an AFA that turns out to be real is re-paged as a structure fire),
-  // and that update usually rides in on a *later, thinner* page than the one the
-  // rest of the row comes from. So the type is taken from the most recent page
-  // that carried one — see isLaterType().
-  const merged = useMemo(() => {
-    const map = new Map<
-      string,
-      { inc: Incident; units: Unit[]; startedAt: string; typedBy: Incident }
-    >();
-    for (const i of filtered) {
-      const key = i.incidentNo || i.id;
-      let entry = map.get(key);
-      if (!entry) {
-        entry = { inc: i, units: [], startedAt: i.receivedAt, typedBy: i };
-        map.set(key, entry);
-      } else {
-        entry.inc = fullerOf(entry.inc, i);
-        if (i.receivedAt < entry.startedAt) entry.startedAt = i.receivedAt;
-        if (isLaterType(entry.typedBy, i)) entry.typedBy = i;
-      }
-      for (const name of unitTokens(i.unit)) {
-        if (!name) continue;
-        const held = entry.units.find((u) => u.name === name);
-        if (held) held.stopped ||= i.stoppedAt != null;
-        else entry.units.push({ name, stopped: i.stoppedAt != null });
-      }
-    }
-    return [...map.values()].map(({ inc, units, startedAt, typedBy }) => ({
-      inc:
-        inc.receivedAt === startedAt && inc.type === typedBy.type
-          ? inc
-          : { ...inc, receivedAt: startedAt, type: typedBy.type },
-      units,
-    }));
-  }, [filtered]);
+  // What's on the board: one entry per job (see mergeEntries above).
+  const merged = useMemo(() => mergeEntries(filtered), [filtered]);
 
   // ── flash what has just changed ──────────────────────────────────────────
   //
-  // Two things arrive on a live board, and each says so in the same idiom: two
-  // hard blue blinks on the same beat, blue because red on this board means stood
-  // down.
+  // A live board changes under the person reading it, and every change says so in
+  // the same idiom: two hard blue blinks on the same beat, blue because red on
+  // this board means stood down.
   //
-  // A job that has just been paged flashes as a whole row — the row *is* the news,
-  // and it lands at the top of a list someone may not be looking at.
+  // The row is what flashes, for a job just paged and for a job that has changed
+  // alike — a re-type, an address that has come through fuller or been corrected,
+  // a resource added, a resource stood down. It's the row that's different, and it
+  // sits in a list nobody may be looking at.
   //
-  // A job that has just gained a resource flashes that badge only. The row isn't
-  // what changed: control pages more brigades to a job minutes after it alerts,
-  // and on a job already running six appliances what's worth the look is which one
-  // just joined them, not the row it joined.
+  // A resource that has just been added flashes too, but *counter* to its row:
+  // lit while the row is dark and dark while the row is lit (see globals.css). A
+  // badge blinking in step with its row would just be part of the wash, and on a
+  // job already running six appliances the whole question is which one joined.
   //
   // Diffed against `incidents` rather than `merged`, so typing in the search box —
   // which folds whole-table matches into the merged view — can't read as jobs and
-  // resources arriving. A new row still has to be *recent* to flash: reaching an
-  // older page by scrolling also produces keys we've never held, and history
-  // scrolling into view is not an incident being paged.
+  // resources arriving. Through mergeEntries, so what's compared is what's drawn:
+  // the type and address on screen are reconciled across a job's rows, and
+  // diffing the rows themselves would miss a re-type that arrives on a page the
+  // board doesn't show.
+  //
+  // Two things that are not news are held back. A job we've never held has to be
+  // *recent* to flash, because reaching an older page by scrolling also produces
+  // keys we've never held. And a scroll-load is skipped outright: pulling in a
+  // job's older sibling rows can hand the reconciliation above a fuller address
+  // for a job already on the board, which is a page from an hour ago arriving,
+  // not the job changing.
   useEffect(() => {
-    const next = new Map<string, { units: Set<string>; startedAt: string }>();
-    for (const i of incidents) {
-      const key = i.incidentNo || i.id;
-      let held = next.get(key);
-      if (!held) next.set(key, (held = { units: new Set(), startedAt: i.receivedAt }));
-      else if (i.receivedAt < held.startedAt) held.startedAt = i.receivedAt;
-      for (const name of unitTokens(i.unit)) if (name) held.units.add(name);
+    const next = new Map<string, Seen>();
+    for (const { key, inc, units } of mergeEntries(incidents)) {
+      next.set(key, {
+        units: new Set(units.map((u) => u.name)),
+        stopped: new Set(units.filter((u) => u.stopped).map((u) => u.name)),
+        type: inc.type,
+        location: inc.location,
+        startedAt: inc.receivedAt,
+      });
     }
 
     const prev = seenRef.current;
     seenRef.current = next;
-    if (!prev) return; // first load — the whole board would be "new"
+    const backfilled = pagedInRef.current;
+    pagedInRef.current = false;
+    if (!prev) return;      // first load — the whole board would be "new"
+    if (backfilled) return; // history, now recorded, but nothing to announce
 
     const cutoff = Date.now() - NEW_ROW_MAX_AGE_MS;
-    const marks: string[] = [];
-    for (const [key, { units, startedAt }] of next) {
+    const marks = new Map<string, FlashKind>();
+    for (const [key, now] of next) {
       const before = prev.get(key);
       if (!before) {
-        if (new Date(startedAt).getTime() >= cutoff) marks.push(key);
+        if (new Date(now.startedAt).getTime() >= cutoff) marks.set(key, "arrived");
         continue;
       }
-      // A job we already had: only the resources it has gained since.
-      for (const name of units) {
-        if (!before.units.has(name)) marks.push(flashKey(key, name));
+      // A job we already had: what about it is different.
+      let changed = now.type !== before.type || now.location !== before.location;
+      for (const name of now.units) {
+        if (before.units.has(name)) continue;
+        marks.set(flashKey(key, name), "added");
+        changed = true;
       }
+      for (const name of now.stopped) if (!before.stopped.has(name)) changed = true;
+      if (changed) marks.set(key, "changed");
     }
-    if (!marks.length) return;
+    if (!marks.size) return;
 
     setFlashing((held) => {
-      const updated = new Set(held);
-      for (const key of marks) updated.add(key);
+      const updated = new Map(held);
+      for (const [key, kind] of marks) updated.set(key, kind);
       return updated;
     });
-    for (const key of marks) {
+    for (const key of marks.keys()) {
       const timers = flashTimersRef.current;
       clearTimeout(timers.get(key));
       timers.set(key, setTimeout(() => {
         timers.delete(key);
         setFlashing((held) => {
           if (!held.has(key)) return held;
-          const updated = new Set(held);
+          const updated = new Map(held);
           updated.delete(key);
           return updated;
         });
@@ -1049,15 +1107,17 @@ export default function PagerBoard({
                   <td colSpan={5}>{date}</td>
                 </tr>
                 {rows.map((entry) => {
-                  const { inc: i, units } = entry;
+                  const { key, inc: i, units } = entry;
                   const tc = typeClass(i.type);
                   const { street, locality } = splitAddress(i.location);
-                  const key = i.incidentNo || i.id;
+                  const flash = flashing.get(key);
                   const open = i.incidentNo ? () => setSelected(entry) : undefined;
                   return (
                     <tr
                       key={key}
-                      className={`data-row${open ? " clickable" : ""}${flashing.has(key) ? " arrived" : ""}`}
+                      className={`data-row${open ? " clickable" : ""}${
+                        flash === "arrived" || flash === "changed" ? ` ${flash}` : ""
+                      }`}
                       onClick={open ? (e) => {
                         // A drag that ended up selecting the address was a read,
                         // not a tap — don't answer it by throwing a card over the
@@ -1088,7 +1148,7 @@ export default function PagerBoard({
                                 <UnitBadge
                                   key={u.name}
                                   unit={u}
-                                  flash={flashing.has(flashKey(key, u.name))}
+                                  flash={flashing.get(flashKey(key, u.name)) === "added"}
                                 />
                               ))
                             : <span className="dim">—</span>}

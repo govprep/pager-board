@@ -442,25 +442,34 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 tbody tr.data-row.clickable { cursor: pointer; }
 tbody tr.data-row.clickable:active { background: var(--surface-2); }
 
-/* …and a job that has only just been paged: the same two hard blue blinks the
-   new-resource badge gives, on the same 800ms step-end beat, so "new" reads as
-   one thing across the board. Here it's the whole row, because here the whole row
-   is what's new — it arrives at the top of a list nobody may be looking at.
+/* …and a job that has just been paged, or one already on the board that has just
+   changed under it — a re-type, a fuller or corrected address, a resource added
+   or stood down. Two hard blue blinks on an 800ms step-end beat: 300ms as it
+   stands, then 500ms blue, twice.
 
-   As with the badge, no 0%/100% frame is declared: the implicit ones are the row's
-   own styling, so the off half is whatever the row already looks like (including
-   hovered) and there's no fade at either end.
+   Both cases get the identical flash, and deliberately so. The question a board
+   answers at a glance is "what is different from the last time I looked", and an
+   arrival and a change are the same answer to it; splitting them into two
+   vocabularies would mean learning which blue meant which. What changed is then
+   legible in the row itself — the new type, the address that filled in, the badge
+   blinking against the row (below).
+
+   No 0%/100% frame is declared: the implicit ones are the row's own styling, so
+   the off half is whatever the row already looks like (including hovered) and
+   there's no fade at either end.
 
    Total duration is mirrored by FLASH_MS in PagerBoard.tsx, which removes the
    class — keep the two in step. */
 @keyframes row-new-pulse {
   37.5% { background-color: var(--row-new-bg); }
 }
-tbody tr.data-row.arrived { animation: row-new-pulse 800ms step-end 2; }
+tbody tr.data-row.arrived,
+tbody tr.data-row.changed { animation: row-new-pulse 800ms step-end 2; }
 
 /* Turned down, not off — one blink across the same window. */
 @media (prefers-reduced-motion: reduce) {
-  tbody tr.data-row.arrived { animation: row-new-pulse 1600ms step-end 1; }
+  tbody tr.data-row.arrived,
+  tbody tr.data-row.changed { animation: row-new-pulse 1600ms step-end 1; }
 }
 
 /* incident number */
@@ -545,6 +554,16 @@ tbody tr.data-row.arrived { animation: row-new-pulse 800ms step-end 2; }
 /* call sign */
 .cs-cell { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 .badge {
+  /* The badge's resting colours, restated as variables so the flash below can
+     return to them by name. A keyframe can say "whatever this element already
+     looks like" only at its implicit first and last frames, and a counter-phase
+     flash has to say it in the middle. `.stopped` re-points them, so a resource
+     that arrives already stood down blinks back to its red rather than to a
+     plain badge it has never looked like. */
+  --badge-off-bg:     var(--badge-bg);
+  --badge-off-border: var(--badge-border);
+  --badge-off-text:   var(--badge-text);
+
   display: inline-block;
   padding: 2px 7px;
   border-radius: 4px;
@@ -562,6 +581,10 @@ tbody tr.data-row.arrived { animation: row-new-pulse 800ms step-end 2; }
    incident. Struck through as well as recoloured — the state has to survive a
    glance from someone who reads red as "urgent" on a fire board. */
 .badge.stopped {
+  --badge-off-bg:     var(--badge-stopped-bg);
+  --badge-off-border: var(--badge-stopped-border);
+  --badge-off-text:   var(--badge-stopped-text);
+
   background: var(--badge-stopped-bg);
   border-color: var(--badge-stopped-border);
   color: var(--badge-stopped-text);
@@ -574,30 +597,43 @@ tbody tr.data-row.arrived { animation: row-new-pulse 800ms step-end 2; }
    flashes, blue because red on this board means stood down.
 
    `step-end` is what makes it a flash rather than a glow — the value jumps
-   between the two states and holds, with no fade at either end. Each 800ms
-   iteration is 300ms off then 500ms blue, so the badge appears normally, blinks,
-   blinks again and stops: quick enough to catch the eye, and each blink held
-   long enough to read the badge underneath it. The gap is the short half — two
-   long flashes separated by a beat, not a slow throb.
+   between the two states and holds, with no fade at either end. Each blink is
+   held long enough to read the badge underneath it, and the gap is the short
+   half: two long flashes separated by a beat, not a slow throb.
 
-   The keyframe deliberately declares no 0%/100% frame. Those are implicit, and
-   an implicit frame is the badge's *own* styling — so the off half is whatever
-   that badge already looks like, and a resource that arrives already stood down
-   blinks out of its red instead of snapping to the plain badge first.
+   The beat is the row's, run backwards. Adding a resource is a change to the job,
+   so the row is flashing too (above), and this badge takes the opposite half of
+   every 800ms iteration: blue for the row's first 300ms, its own colours for the
+   500ms the row spends blue. So the badge is never doing what the row is doing —
+   it lights first against a row that hasn't, then goes dark and punches a hole in
+   the blue as the row fills in behind it. On a job running six appliances that is
+   the whole point: the row says the job changed, and the one badge out of step
+   with it says which resource is the change.
+
+   Hence the explicit frames, where the row's keyframe needs none. The off half
+   lands mid-animation rather than at either end, so it can't be left implicit —
+   it names the badge's resting colours through --badge-off-*, which `.stopped`
+   re-points for a resource that arrives already stood down.
 
    Total duration is mirrored by FLASH_MS in PagerBoard.tsx, which removes the
    class — keep the two in step. */
 @keyframes unit-added-pulse {
-  37.5% {
+  0% {
     background-color: var(--badge-added-bg);
     border-color: var(--badge-added-border);
     color: var(--badge-added-text);
+  }
+  37.5% {
+    background-color: var(--badge-off-bg);
+    border-color: var(--badge-off-border);
+    color: var(--badge-off-text);
   }
 }
 .badge.added { animation: unit-added-pulse 800ms step-end 2; }
 
 /* Turned down, not off — the badge still has to announce itself, so reduced
-   motion gets a single blink across the same window instead of two. */
+   motion gets a single blink across the same window instead of two. Still the
+   inverse of the row, which is turned down the same way. */
 @media (prefers-reduced-motion: reduce) {
   .badge.added { animation: unit-added-pulse 1600ms step-end 1; }
 }
