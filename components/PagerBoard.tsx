@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { Incident, PagerMessage, RawStatus } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
+import { toIncident } from "@/lib/incident-row";
 import { hasIncidentNumber } from "@/lib/parser";
 import { dedupeMessages } from "@/lib/incident-messages";
 import { fullerOf, isLaterType } from "@/lib/incident-merge";
@@ -126,6 +127,11 @@ function flashKey(incidentKey: string, unit: string): string {
 // How many rows to pull per request. The board loads the newest page first,
 // then fetches older pages on scroll (see the IntersectionObserver below).
 const PAGE_SIZE = 200;
+
+// How long to wait before re-reading the board after a change that can't be
+// applied from its own payload. Long enough that a wipe — one event per deleted
+// row — costs a single fetch instead of hundreds.
+const REFRESH_DEBOUNCE_MS = 250;
 
 // Combine two row lists, keyed by id (unique per incident+unit), newest first.
 // Later lists win on conflict, so a refresh's fresh rows replace stale copies.
@@ -446,8 +452,13 @@ export default function PagerBoard({
   const incidentsRef = useRef<Incident[]>([]);
   const loadingRef = useRef(false);
   const sentinelRef = useRef<HTMLTableRowElement | null>(null);
+  // Mirrored for the Realtime handler, which is registered once on mount and so
+  // would otherwise close over the first render's `hasMore`.
+  const hasMoreRef = useRef(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { incidentsRef.current = incidents; }, [incidents]);
+  useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
 
   // Resources that have just been added to a job (flashKey'd), and the timers
   // that will clear them. `seenUnits` is the previous pass's {incident -> units}
@@ -530,6 +541,39 @@ export default function PagerBoard({
     }
   }
 
+  // Fold one row straight into the board. A Realtime payload carries the whole
+  // row, so an arriving page needs no round trip at all — the fetch it used to
+  // trigger cost a request per event, and a job paged to six brigades is six
+  // events inside a couple of seconds.
+  //
+  // The one row not to apply is one older than everything currently loaded and
+  // not already held: the board holds the newest page and fetches older ones on
+  // scroll, so dropping such a row in would seat it directly under the oldest
+  // row on screen as though nothing lay between them. That's a backfill
+  // re-upserting history rather than a job being paged; the scroll fetch will
+  // find it in its proper place.
+  function applyRow(inc: Incident) {
+    setIncidents((prev) => {
+      const oldest = prev[prev.length - 1];
+      const known = prev.some((p) => p.id === inc.id);
+      if (!known && hasMoreRef.current && oldest && inc.receivedAt < oldest.receivedAt) {
+        return prev;
+      }
+      return mergeById(prev, [inc]);
+    });
+  }
+
+  // A DELETE payload carries only the primary key, so a wipe is the one change
+  // that still needs the board re-read — coalesced, since a wipe arrives as one
+  // event per row.
+  function scheduleRefresh() {
+    if (refreshTimerRef.current) return;
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      refresh();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+
   // Append the next older page. Fired by the scroll sentinel below.
   async function loadMore() {
     if (loadingRef.current || !hasMore) return;
@@ -550,13 +594,19 @@ export default function PagerBoard({
     // Load the board now (no server prefetch — the gate renders us empty).
     refresh();
 
-    // Supabase Realtime — instant push on any INSERT/UPDATE/DELETE.
+    // Supabase Realtime — instant push on any INSERT/UPDATE/DELETE. The row
+    // rides along with the event, so INSERT/UPDATE go straight onto the board;
+    // only a DELETE (primary key only) has to ask the server anything.
     const channel = getBrowserClient()
       .channel("incidents-live")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "incidents" },
-        () => { refresh(); },
+        (payload) => {
+          const row = payload.eventType === "DELETE" ? null : payload.new;
+          if (row && typeof row.id === "string") applyRow(toIncident(row));
+          else scheduleRefresh();
+        },
       )
       .subscribe();
 
@@ -578,6 +628,7 @@ export default function PagerBoard({
     return () => {
       getBrowserClient().removeChannel(channel);
       clearInterval(t);
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
       window.removeEventListener("pageshow", onVisible);

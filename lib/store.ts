@@ -5,29 +5,13 @@ import { passesBoardFilter } from "./filter";
 import { recordRawMessages } from "./raw-feed";
 import { collapseById, dropWeakerThanStored, type IncidentRow } from "./incident-merge";
 import { withInferredOrigin } from "./origin";
+import { toIncident } from "./incident-row";
 import { supabase } from "./supabase";
 
 // ---------------------------------------------------------------------------
 // Supabase-backed store.  All functions are async.
 // The `incidents` table schema is in supabase/schema.sql.
 // ---------------------------------------------------------------------------
-
-// Map DB row (snake_case) → Incident (camelCase)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toIncident(row: any): Incident {
-  return {
-    id: row.id,
-    incidentNo: row.incident_no,
-    type: row.type,
-    unit: row.unit,
-    location: row.location,
-    coords: row.coords ?? null,
-    receivedAt: row.received_at,
-    fields: row.fields ?? {},
-    raw: row.raw,
-    stoppedAt: row.stopped_at ?? null,
-  };
-}
 
 // Only the columns the board actually renders/searches — keeps the payload
 // lean so large pages stay fast. (Drops `fields`, `slacked_at`, etc.)

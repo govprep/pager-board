@@ -33,7 +33,11 @@ with the state pulled from the `(NSW)` parenthetical. See `lib/parser.ts`.
 
 ## Feeding in real data
 
-The UI polls `GET /api/incidents` every 5s. Push live traffic with:
+The board loads `GET /api/incidents` once and is live after that on Supabase
+Realtime: a row arrives as its own payload and goes straight onto the board, so
+a page costs no request at all. It re-reads only on a heartbeat every 30s (in
+case the socket dropped), on returning to the foreground, and after a wipe —
+`DELETE` is the one change whose payload carries no row. Push live traffic with:
 
 ```bash
 curl -X POST http://localhost:3000/api/incidents \

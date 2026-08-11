@@ -1,0 +1,25 @@
+import type { Incident } from "./types";
+
+// The `incidents` row shape (snake_case) → Incident (camelCase).
+//
+// Deliberately free of any Supabase import, because both sides of the wire need
+// it: the server reads rows out of the table (lib/store.ts, feeder/slack.ts,
+// feeder/push.ts) and the browser receives the very same row shape as a Realtime
+// `postgres_changes` payload, which carries every column rather than the subset
+// the list endpoint selects. Anything missing reads as absent, so a payload from
+// a database that predates a column maps the same as a queried row does.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function toIncident(row: any): Incident {
+  return {
+    id: row.id,
+    incidentNo: row.incident_no,
+    type: row.type,
+    unit: row.unit,
+    location: row.location,
+    coords: row.coords ?? null,
+    receivedAt: row.received_at,
+    fields: row.fields ?? {},
+    raw: row.raw,
+    stoppedAt: row.stopped_at ?? null,
+  };
+}

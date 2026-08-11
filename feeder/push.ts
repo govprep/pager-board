@@ -7,6 +7,7 @@ import {
   wantsIncident,
   type AlertPrefs,
 } from "../lib/alert-prefs";
+import { toIncident as rowToIncident } from "../lib/incident-row";
 import { applianceUnits } from "../lib/units";
 import { friendlyType } from "./type-names";
 
@@ -84,22 +85,6 @@ function isStale(inc: Incident): boolean {
   const received = Date.parse(inc.receivedAt);
   if (!Number.isFinite(received)) return false; // no usable time → treat as live
   return Date.now() - received > maxAgeMin() * 60_000;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function rowToIncident(row: any): Incident {
-  return {
-    id: row.id,
-    incidentNo: row.incident_no,
-    type: row.type,
-    unit: row.unit,
-    location: row.location,
-    coords: row.coords ?? null,
-    receivedAt: row.received_at,
-    fields: row.fields ?? {},
-    raw: row.raw,
-    stoppedAt: row.stopped_at ?? null,
-  };
 }
 
 // Groups a job's pages into one notification (same key Slack threads on).

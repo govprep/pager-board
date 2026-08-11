@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Incident } from "../lib/types";
+import { toIncident as rowToIncident } from "../lib/incident-row";
 import { channelForLocation } from "../lib/area-channels";
 import { staticMapUrl } from "../lib/maps";
 import { friendlyType } from "./type-names";
@@ -47,22 +48,6 @@ async function postMessage(token: string, body: Record<string, any>): Promise<Sl
 // The key that groups a job's pages into one thread.
 function groupKey(inc: Incident): string {
   return inc.incidentNo?.trim() || inc.id;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function rowToIncident(row: any): Incident {
-  return {
-    id: row.id,
-    incidentNo: row.incident_no,
-    type: row.type,
-    unit: row.unit,
-    location: row.location,
-    coords: row.coords ?? null,
-    receivedAt: row.received_at,
-    fields: row.fields ?? {},
-    raw: row.raw,
-    stoppedAt: row.stopped_at ?? null,
-  };
 }
 
 async function buildParentBlocks(inc: Incident) {
