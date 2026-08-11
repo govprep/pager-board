@@ -162,7 +162,7 @@ the board*, which is exactly the kind of change someone who has read that row
 will never look at again. So the board points at them:
 
 - **A resource is added** → *that badge* blinks blue twice — hard on, hard off,
-  no fade, 600ms a blink (`.badge.added` in `globals.css`, `FLASH_MS` in
+  no fade, 500ms blue with a 300ms gap (`.badge.added` in `globals.css`, `FLASH_MS` in
   `components/PagerBoard.tsx`). The badge rather than the row, because the row
   isn't what changed: on a job already running six appliances, what's worth the
   look is which one just joined them. Blue, because red on this board means a

@@ -108,11 +108,11 @@ function splitAddress(loc: string): { street: string; locality: string } {
   };
 }
 
-// How long a newly added resource's badge stays marked: two 600ms blinks. Kept
+// How long a newly added resource's badge stays marked: two 800ms blinks. Kept
 // in step with the `unit-added-pulse` animation in globals.css — the class is
 // dropped on a timer rather than on animationend so it still clears for someone
 // whose reduced-motion setting has turned the animation down.
-const FLASH_MS = 1200;
+const FLASH_MS = 1600;
 
 // Flashes are tracked per {incident, resource} rather than per incident, since a
 // job can gain one appliance while the six already on it stay put. An incident

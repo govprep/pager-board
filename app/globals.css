@@ -440,10 +440,11 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
    flashes, blue because red on this board means stood down.
 
    `step-end` is what makes it a flash rather than a glow — the value jumps
-   between the two states and holds, with no fade at either end. Each 600ms
-   iteration is half off and half on, so the badge appears normally, blinks,
-   blinks again and stops: quick enough to catch the eye, slow enough that both
-   blinks register as blinks.
+   between the two states and holds, with no fade at either end. Each 800ms
+   iteration is 300ms off then 500ms blue, so the badge appears normally, blinks,
+   blinks again and stops: quick enough to catch the eye, and each blink held
+   long enough to read the badge underneath it. The gap is the short half — two
+   long flashes separated by a beat, not a slow throb.
 
    The keyframe deliberately declares no 0%/100% frame. Those are implicit, and
    an implicit frame is the badge's *own* styling — so the off half is whatever
@@ -453,18 +454,18 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
    Total duration is mirrored by FLASH_MS in PagerBoard.tsx, which removes the
    class — keep the two in step. */
 @keyframes unit-added-pulse {
-  50% {
+  37.5% {
     background-color: var(--badge-added-bg);
     border-color: var(--badge-added-border);
     color: var(--badge-added-text);
   }
 }
-.badge.added { animation: unit-added-pulse 600ms step-end 2; }
+.badge.added { animation: unit-added-pulse 800ms step-end 2; }
 
 /* Turned down, not off — the badge still has to announce itself, so reduced
    motion gets a single blink across the same window instead of two. */
 @media (prefers-reduced-motion: reduce) {
-  .badge.added { animation: unit-added-pulse 1200ms step-end 1; }
+  .badge.added { animation: unit-added-pulse 1600ms step-end 1; }
 }
 
 /* status */
