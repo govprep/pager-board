@@ -29,9 +29,33 @@ function isStandalone(): boolean {
 // a nag. Local to the device, like the subscription it's about.
 const PICKER_OFFERED_KEY = "belterhub.alerts.picker-offered";
 
+// True on phones and tablets.
+//
+// Asked as a capability rather than a width: a phone held in landscape is wider
+// than a narrow desktop window, and it's still the device that wants a
+// notification. `hover: none` and `pointer: coarse` together are the pair that
+// separates a touchscreen from a mouse — a touch-capable laptop still reports its
+// mouse as the primary pointer, so it reads as the desktop it is.
+//
+// Starts false so the default is the desktop treatment, and flips on mount; the
+// component renders nothing while `state` is "loading" anyway, so there's no
+// moment where a control appears and then leaves.
+function useTouchDevice(): boolean {
+  const [touch, setTouch] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(hover: none) and (pointer: coarse)");
+    setTouch(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => setTouch(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return touch;
+}
+
 export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOption[] }) {
   const [state, setState] = useState<State>("loading");
   const [showPrefs, setShowPrefs] = useState(false);
+  const touch = useTouchDevice();
 
   useEffect(() => {
     if (!pushSupported()) {
@@ -98,6 +122,17 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
 
   // Nothing useful to offer — stay out of the topbar.
   if (state === "loading" || state === "unsupported") return null;
+
+  // Alerts are a phone feature: the point of one is the device in your pocket
+  // buzzing about a job you can't see, and on iOS they only work from the
+  // installed home-screen app at all. A desktop board is a screen someone is
+  // already watching, so the offer is just noise in its topbar.
+  //
+  // The one state a desktop keeps is "subscribed", because that control is also
+  // the only way to reach the area picker and to see that this device has alerts
+  // on. Hiding it from a desktop that had already enabled them would leave it
+  // notifying with nothing in the UI to turn it off.
+  if (!touch && state !== "subscribed") return null;
 
   if (state === "needs-install") {
     return (
