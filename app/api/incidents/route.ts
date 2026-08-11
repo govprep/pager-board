@@ -42,6 +42,7 @@ function isAdmin(req: Request): boolean {
 //   limit     page size (default 200, capped at 500)
 //   before    received_at of the oldest row you have  ┐ keyset cursor for
 //   beforeId  id of that same row                      ┘ the next older page
+//   q         free-text search across the whole table, not just this page
 export async function GET(req: Request) {
   if (!(await isAuthed(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -50,8 +51,9 @@ export async function GET(req: Request) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 500);
   const before = url.searchParams.get("before") ?? undefined;
   const beforeId = url.searchParams.get("beforeId") ?? undefined;
+  const q = url.searchParams.get("q") ?? undefined;
 
-  const incidents = await listIncidents(limit, before, beforeId);
+  const incidents = await listIncidents(limit, before, beforeId, q);
   return NextResponse.json({ incidents });
 }
 

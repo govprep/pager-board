@@ -18,15 +18,27 @@ import { supabase } from "./supabase";
 const LIST_COLUMNS =
   "id, incident_no, type, unit, location, coords, received_at, raw, stopped_at";
 
+// Columns a board search looks through. `raw` is the whole pager line and so
+// covers most of it, but the parsed columns are searched in their own right:
+// FRNSW type names are normalised on the way in (lib/type-names.ts), so the
+// words the board displays — and therefore the words someone types — aren't
+// always the words that came over the air.
+const SEARCH_COLUMNS = ["incident_no", "type", "unit", "location", "raw"];
+
 /**
  * A page of incidents, newest first. Pass the `(before, beforeId)` of the
  * oldest row you already have to fetch the next older page (keyset pagination:
  * fast at any depth, and no duplicate/skipped rows even on tied timestamps).
+ *
+ * `search` filters across the whole table rather than the page — the board's own
+ * text filter can only see the rows it has loaded, which silently means "the
+ * newest 200".
  */
 export async function listIncidents(
   limit = 200,
   before?: string,
   beforeId?: string,
+  search?: string,
 ): Promise<Incident[]> {
   let q = supabase
     .from("incidents")
@@ -35,9 +47,26 @@ export async function listIncidents(
     .order("id", { ascending: false })
     .limit(limit);
 
+  // Same escaping as the raw feed below: drop the characters PostgREST uses to
+  // separate filter values, then escape LIKE's wildcards, so a search for "%"
+  // matches a literal % instead of everything and can't reshape the filter.
+  // Trimmed again afterwards: a term made only of the stripped characters would
+  // otherwise become a search for a run of spaces, which matches whatever happens
+  // to be padded rather than nothing.
+  const term = (search ?? "")
+    .replace(/[\\,()]/g, " ")
+    .replace(/[%_]/g, "\\$&")
+    .trim();
+  if (term) {
+    q = q.or(SEARCH_COLUMNS.map((c) => `${c}.ilike.%${term}%`).join(","));
+  }
+
   if (before) {
-    // Rows strictly older than the (received_at, id) cursor.
-    q = beforeId
+    // Rows strictly older than the (received_at, id) cursor. The tie-breaking
+    // form is a second `or`, which can't be combined with the search's one, so a
+    // searched page falls back to the timestamp alone — searches are served as a
+    // single capped page (see the caller), so no cursor is in play there.
+    q = beforeId && !term
       ? q.or(`received_at.lt.${before},and(received_at.eq.${before},id.lt.${beforeId})`)
       : q.lt("received_at", before);
   }

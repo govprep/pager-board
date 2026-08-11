@@ -11,24 +11,10 @@ import { fullerOf, isLaterType } from "@/lib/incident-merge";
 import { lgaFromLocation, lgaKey } from "@/lib/lga";
 import EnableAlerts from "@/components/EnableAlerts";
 import IncidentMap from "@/components/IncidentMap";
+import Clock from "@/components/Clock";
+import LiveDot, { type LiveState } from "@/components/LiveDot";
+import { fmtTime as fmt, dateKey } from "@/lib/time";
 import { pushSupported, isFollowing, followIncident, unfollowIncident } from "@/lib/push-client";
-
-function fmt(iso: string, secs = false) {
-  return new Date(iso).toLocaleTimeString("en-AU", {
-    hour: "2-digit",
-    minute: "2-digit",
-    ...(secs ? { second: "2-digit" } : {}),
-    hour12: false,
-  });
-}
-
-function dateKey(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
 
 // "09/08 14:32:07" — a job's pages can straddle midnight, so the per-incident
 // message log carries the date as well as the clock time.
@@ -109,17 +95,25 @@ function splitAddress(loc: string): { street: string; locality: string } {
   };
 }
 
-// How long a newly added resource's badge stays marked: two 800ms blinks. Kept
-// in step with the `unit-added-pulse` animation in globals.css — the class is
+// How long a flash stays on: two 800ms blinks. Kept in step with the
+// `unit-added-pulse` / `row-new-pulse` animations in globals.css — the class is
 // dropped on a timer rather than on animationend so it still clears for someone
 // whose reduced-motion setting has turned the animation down.
 const FLASH_MS = 1600;
 
-// Flashes are tracked per {incident, resource} rather than per incident, since a
-// job can gain one appliance while the six already on it stay put. An incident
-// key never contains a space (it's the incident number, or a row id built from
-// one), so a space is enough to keep the halves apart even though unit names
-// have their own ("428 QUEANBEYAN").
+// A job has to have been paged this recently to flash as a new arrival. Rows
+// appear on the board for two quite different reasons: one was just paged, and
+// one is an older page that scrolling has reached (or a feed re-upserting
+// history). Only the first is news, and the only thing separating them is the
+// clock. Generous enough to cover a slow source — Telegram relays can run
+// minutes behind the air — without ever lighting up a backfill.
+const NEW_ROW_MAX_AGE_MS = 10 * 60_000;
+
+// One flash set holds both kinds of mark: a whole job that has just arrived
+// (keyed by the incident key alone) and a resource added to a job already on the
+// board (keyed by both). An incident key never contains a space — it's the
+// incident number, or a row id built from one — so the two can't collide even
+// though unit names have spaces of their own ("428 QUEANBEYAN").
 function flashKey(incidentKey: string, unit: string): string {
   return `${incidentKey} ${unit}`;
 }
@@ -127,6 +121,15 @@ function flashKey(incidentKey: string, unit: string): string {
 // How many rows to pull per request. The board loads the newest page first,
 // then fetches older pages on scroll (see the IntersectionObserver below).
 const PAGE_SIZE = 200;
+
+// A search asks the server for matches across the whole table in one capped
+// request rather than paging through them. Searching this board means "find that
+// job from Tuesday", not "read every fire of the last year" — and one page needs
+// no cursor, so it can't skip a row on a tied timestamp the way a paged search
+// would. SEARCH_LIMIT is the API's own ceiling; hitting it is reported rather
+// than hidden.
+const SEARCH_LIMIT = 500;
+const SEARCH_DEBOUNCE_MS = 300;
 
 // How long to wait before re-reading the board after a change that can't be
 // applied from its own payload. Long enough that a wipe — one event per deleted
@@ -168,6 +171,30 @@ function UnitBadge({ unit, flash = false }: { unit: Unit; flash?: boolean }) {
     >
       {unit.name}
     </span>
+  );
+}
+
+// Shown while the first page is in flight. The board can't be prefetched on the
+// server (the access gate renders it empty), so without this the first thing a
+// cold load says is "No incidents." — which on a board people check to find out
+// whether anything is happening is the one wrong answer.
+//
+// Deliberately not table rows: at phone widths the table is restyled into cards
+// by cell position, and placeholder cells would have to play along with a grid
+// they aren't part of.
+function BoardSkeleton() {
+  return (
+    <div className="skeleton" aria-hidden="true">
+      {Array.from({ length: 8 }, (_, n) => (
+        <div className="skeleton-row" key={n}>
+          <span className="skeleton-bar w-inc" />
+          <span className="skeleton-bar w-time" />
+          <span className="skeleton-bar w-type" />
+          <span className="skeleton-bar w-units" />
+          <span className="skeleton-bar w-addr" />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -442,8 +469,15 @@ export default function PagerBoard({
 }) {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [search, setSearch] = useState("");
-  const [now, setNow] = useState<Date | null>(null);
   const [selected, setSelected] = useState<Entry | null>(null);
+  // False only until the first page lands — an empty board and a board that
+  // hasn't answered yet are different things, and "No incidents." is a lie about
+  // the second one.
+  const [loading, setLoading] = useState(true);
+  // Whether the Realtime socket is joined. When it isn't, the board is running on
+  // the 30s heartbeat below, and the topbar says so rather than leaving a stalled
+  // board looking like a quiet one.
+  const [live, setLive] = useState<LiveState>("connecting");
   // Infinite scroll: whether older rows remain to load, and a guard against
   // firing overlapping "load older" fetches. `incidentsRef` mirrors the state
   // so the observer callback always reads the current oldest-row cursor.
@@ -452,30 +486,54 @@ export default function PagerBoard({
   const incidentsRef = useRef<Incident[]>([]);
   const loadingRef = useRef(false);
   const sentinelRef = useRef<HTMLTableRowElement | null>(null);
+  const topbarRef = useRef<HTMLElement | null>(null);
   // Mirrored for the Realtime handler, which is registered once on mount and so
   // would otherwise close over the first render's `hasMore`.
   const hasMoreRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Whole-table search results, kept apart from `incidents` on purpose: they're
+  // history being looked up, not traffic arriving, so they must not reach the
+  // flash diff below (an hour of matches landing at once would read as an hour of
+  // jobs being paged at once) and must not become the paging cursor.
+  const [query, setQuery] = useState("");            // debounced copy of `search`
+  const [found, setFound] = useState<Incident[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [foundCapped, setFoundCapped] = useState(false);
+
   useEffect(() => { incidentsRef.current = incidents; }, [incidents]);
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
 
-  // Resources that have just been added to a job (flashKey'd), and the timers
-  // that will clear them. `seenUnits` is the previous pass's {incident -> units}
-  // picture, which the effect below diffs against — null until the first load
-  // has been recorded.
+  // What's currently flashing, and the timers that will clear it. `seenRef` is
+  // the previous pass's picture of the board — which jobs were on it, which
+  // resources each had, and when each was paged — for the effect below to diff
+  // against. Null until the first load has been recorded.
   const [flashing, setFlashing] = useState<Set<string>>(() => new Set());
-  const seenUnitsRef = useRef<Map<string, Set<string>> | null>(null);
+  const seenRef = useRef<Map<string, { units: Set<string>; startedAt: string }> | null>(null);
   const flashTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   // An incident a notification tap asked us to open, held until it lands on the
   // board (the row may not have loaded yet when the deep link / message arrives).
   const [pendingIncidentNo, setPendingIncidentNo] = useState<string | null>(null);
 
+  // The incident card sits below the topbar, and the topbar has no single height
+  // to hard-code: it wraps to a second row on a phone, and grows again by the
+  // status-bar inset once the PWA is installed. Measured and published as a
+  // custom property so the overlay and the modal's max-height track it (see
+  // globals.css) instead of assuming the desktop 50px.
   useEffect(() => {
-    setNow(new Date());
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
+    const el = topbarRef.current;
+    if (!el) return;
+    const publish = () => {
+      document.documentElement.style.setProperty(
+        "--topbar-h",
+        `${Math.round(el.getBoundingClientRect().height)}px`,
+      );
+    };
+    publish();
+    const obs = new ResizeObserver(publish);
+    obs.observe(el);
+    return () => obs.disconnect();
   }, []);
 
   // Notification taps reach us two ways: a fresh tab opened at ?incident=NNN, or
@@ -502,17 +560,24 @@ export default function PagerBoard({
     return () => navigator.serviceWorker?.removeEventListener("message", onMessage);
   }, []);
 
-  // Fetch one page from the members-only API (token attached). Pass the oldest
-  // row you have to page backwards; omit it for the newest page. Returns null
-  // on any failure so callers can keep the board they already have.
-  async function fetchPage(before?: Incident): Promise<Incident[] | null> {
+  // Fetch from the members-only API (token attached). Pass the oldest row you
+  // have to page backwards; omit it for the newest page. Pass a term to search
+  // the whole table instead of a page of it. Returns null on any failure so
+  // callers can keep the board they already have.
+  async function fetchPage(
+    before?: Incident,
+    term?: string,
+  ): Promise<Incident[] | null> {
     try {
       const token = getToken();
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      const params = new URLSearchParams({
+        limit: String(term ? SEARCH_LIMIT : PAGE_SIZE),
+      });
       if (before) {
         params.set("before", before.receivedAt);
         params.set("beforeId", before.id);
       }
+      if (term) params.set("q", term);
       const res = await fetch(`/api/incidents?${params}`, {
         cache: "no-store",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -531,6 +596,7 @@ export default function PagerBoard({
   // below, so fold it into the older pages we've already loaded.
   async function refresh() {
     const page = await fetchPage();
+    setLoading(false);
     if (!page) return;
     if (page.length < PAGE_SIZE) {
       setIncidents(page);
@@ -590,6 +656,40 @@ export default function PagerBoard({
     setLoadingMore(false);
   }
 
+  // Debounce the box, so a search is one request per pause rather than one per
+  // keystroke. The typed value still filters the loaded rows immediately (see
+  // `filtered`) — this only governs when the rest of the table is asked.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Search the whole table. Without this the board's filter could only ever see
+  // its loaded rows, so "no results" really meant "not in the newest 200" — and
+  // scrolling for more was disabled while searching, so there was no way to find
+  // out otherwise.
+  useEffect(() => {
+    if (!query) {
+      setFound([]);
+      setSearching(false);
+      setFoundCapped(false);
+      return;
+    }
+    let active = true;
+    setSearching(true);
+    (async () => {
+      const rows = await fetchPage(undefined, query);
+      if (!active) return;
+      setFound(rows ?? []);
+      setFoundCapped((rows?.length ?? 0) >= SEARCH_LIMIT);
+      setSearching(false);
+    })();
+    return () => { active = false; };
+  // getToken is a fresh closure on every render, and fetchPage closes over it;
+  // keying on the query alone is what keeps this to one request per search.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
   useEffect(() => {
     // Load the board now (no server prefetch — the gate renders us empty).
     refresh();
@@ -608,7 +708,9 @@ export default function PagerBoard({
           else scheduleRefresh();
         },
       )
-      .subscribe();
+      // Called again on every later transition, so a socket that drops and rejoins
+      // moves the readout with it.
+      .subscribe((status) => setLive(status === "SUBSCRIBED" ? "live" : "down"));
 
     // Fallback heartbeat poll every 30s in case the Realtime socket drops.
     const t = setInterval(refresh, 30_000);
@@ -619,7 +721,10 @@ export default function PagerBoard({
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       refresh();
-      if (channel.state !== "joined") channel.subscribe();
+      if (channel.state !== "joined") {
+        setLive("connecting");
+        channel.subscribe((status) => setLive(status === "SUBSCRIBED" ? "live" : "down"));
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
@@ -636,16 +741,23 @@ export default function PagerBoard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // What the board shows. The typed text filters immediately — that's what makes
+  // the box feel like it's responding to the keystroke — and the server's matches
+  // for the whole table are folded into the same pool as they arrive, so the list
+  // fills in downwards rather than being replaced. Every row still has to pass
+  // the same local predicate, so a server match and a loaded match are held to
+  // one standard.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let result = incidents.filter(hasIncidentNumber);
+    const pool = q && found.length > 0 ? mergeById(incidents, found) : incidents;
+    let result = pool.filter(hasIncidentNumber);
     if (q) result = result.filter((i) =>
       `${i.incidentNo} ${i.type} ${i.unit} ${i.location} ${i.raw}`
         .toLowerCase()
         .includes(q)
     );
     return result;
-  }, [incidents, search]);
+  }, [incidents, found, search]);
 
   // Areas offered by the alert-preferences picker: every LGA the loaded
   // incidents mention, commonest first. Built from the board's own rows (not
@@ -717,50 +829,60 @@ export default function PagerBoard({
     }));
   }, [filtered]);
 
-  // ── flash the resource a job has just gained ─────────────────────────────
+  // ── flash what has just changed ──────────────────────────────────────────
   //
-  // A job keeps growing after it alerts: control pages more brigades to it
-  // minutes later, and the only sign on screen is a badge quietly appearing in a
-  // row that's already been read. So that badge says so itself — two hard blue
-  // blinks, blue rather than red because it means "there's one more of these",
-  // not "here's a new emergency". The blink is on the badge and not the row
-  // because the row isn't what changed: on a job already running six appliances,
-  // what's worth the look is which one just joined them.
+  // Two things arrive on a live board, and each says so in the same idiom: two
+  // hard blue blinks on the same beat, blue because red on this board means stood
+  // down.
   //
-  // Diffed against `incidents` rather than `merged`, so typing in the search box
-  // can't read as resources arriving and leaving. A job seen for the first time
-  // never flashes — its first page is a whole row appearing, which is loud
-  // enough — and neither does an older page scrolled into view, since that's a
-  // key we've never held either.
+  // A job that has just been paged flashes as a whole row — the row *is* the news,
+  // and it lands at the top of a list someone may not be looking at.
+  //
+  // A job that has just gained a resource flashes that badge only. The row isn't
+  // what changed: control pages more brigades to a job minutes after it alerts,
+  // and on a job already running six appliances what's worth the look is which one
+  // just joined them, not the row it joined.
+  //
+  // Diffed against `incidents` rather than `merged`, so typing in the search box —
+  // which folds whole-table matches into the merged view — can't read as jobs and
+  // resources arriving. A new row still has to be *recent* to flash: reaching an
+  // older page by scrolling also produces keys we've never held, and history
+  // scrolling into view is not an incident being paged.
   useEffect(() => {
-    const next = new Map<string, Set<string>>();
+    const next = new Map<string, { units: Set<string>; startedAt: string }>();
     for (const i of incidents) {
       const key = i.incidentNo || i.id;
-      let units = next.get(key);
-      if (!units) next.set(key, (units = new Set()));
-      for (const name of unitTokens(i.unit)) if (name) units.add(name);
+      let held = next.get(key);
+      if (!held) next.set(key, (held = { units: new Set(), startedAt: i.receivedAt }));
+      else if (i.receivedAt < held.startedAt) held.startedAt = i.receivedAt;
+      for (const name of unitTokens(i.unit)) if (name) held.units.add(name);
     }
 
-    const prev = seenUnitsRef.current;
-    seenUnitsRef.current = next;
-    if (!prev) return; // first load — nothing to have grown out of
+    const prev = seenRef.current;
+    seenRef.current = next;
+    if (!prev) return; // first load — the whole board would be "new"
 
-    const grown: string[] = [];
-    for (const [key, units] of next) {
+    const cutoff = Date.now() - NEW_ROW_MAX_AGE_MS;
+    const marks: string[] = [];
+    for (const [key, { units, startedAt }] of next) {
       const before = prev.get(key);
-      if (!before) continue;
+      if (!before) {
+        if (new Date(startedAt).getTime() >= cutoff) marks.push(key);
+        continue;
+      }
+      // A job we already had: only the resources it has gained since.
       for (const name of units) {
-        if (!before.has(name)) grown.push(flashKey(key, name));
+        if (!before.units.has(name)) marks.push(flashKey(key, name));
       }
     }
-    if (!grown.length) return;
+    if (!marks.length) return;
 
     setFlashing((held) => {
       const updated = new Set(held);
-      for (const key of grown) updated.add(key);
+      for (const key of marks) updated.add(key);
       return updated;
     });
-    for (const key of grown) {
+    for (const key of marks) {
       const timers = flashTimersRef.current;
       clearTimeout(timers.get(key));
       timers.set(key, setTimeout(() => {
@@ -820,7 +942,7 @@ export default function PagerBoard({
   return (
     <div className="app">
       {/* header */}
-      <header className="topbar">
+      <header className="topbar" ref={topbarRef}>
         <div className="brand">
           <img src="/logo.jpg" alt="BelterHub" />
         </div>
@@ -835,10 +957,11 @@ export default function PagerBoard({
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search…"
+            placeholder="Search every incident…"
+            enterKeyHint="search"
           />
           {search && (
-            <button className="search-clear" onClick={() => setSearch("")}>×</button>
+            <button className="search-clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>
           )}
         </label>
 
@@ -860,9 +983,25 @@ export default function PagerBoard({
           Sign out
         </button>
 
-        <div className="clock">{now ? fmt(now.toISOString(), true) : "--:--:--"}</div>
+        <LiveDot state={live} />
+        <Clock />
       </header>
 
+
+      {/* A search is answered from the whole table, so say where the answer
+          stands: still being looked up, complete, or capped. Above the results
+          rather than under them — the point of a cap is to be read before you
+          conclude the older job you're after doesn't exist. Outside the scrolling
+          list so it stays put while you read down the matches. */}
+      {search && merged.length > 0 && (
+        <div className="search-note">
+          {searching
+            ? "Searching every incident…"
+            : foundCapped
+              ? `Newest ${SEARCH_LIMIT} matches shown — narrow the search to reach older ones`
+              : `${merged.length} ${merged.length === 1 ? "incident" : "incidents"} matching “${search}”`}
+        </div>
+      )}
 
       {/* table */}
       <div className="list-wrap">
@@ -904,11 +1043,24 @@ export default function PagerBoard({
                   const tc = typeClass(i.type);
                   const { street, locality } = splitAddress(i.location);
                   const key = i.incidentNo || i.id;
+                  const open = i.incidentNo ? () => setSelected(entry) : undefined;
                   return (
-                    <tr key={key} className="data-row">
+                    <tr
+                      key={key}
+                      className={`data-row${open ? " clickable" : ""}${flashing.has(key) ? " arrived" : ""}`}
+                      onClick={open ? (e) => {
+                        // A drag that ended up selecting the address was a read,
+                        // not a tap — don't answer it by throwing a card over the
+                        // thing being read.
+                        if (!window.getSelection()?.isCollapsed) return;
+                        // Let a real control inside the row do its own job.
+                        if ((e.target as HTMLElement).closest("a, button")) return;
+                        open();
+                      } : undefined}
+                    >
                       <td>
                         {i.incidentNo
-                          ? <button className="inc-link" onClick={() => setSelected(entry)}>{i.incidentNo}</button>
+                          ? <button className="inc-link" onClick={open}>{i.incidentNo}</button>
                           : <span className="dim">—</span>}
                       </td>
                       <td>
@@ -978,11 +1130,17 @@ export default function PagerBoard({
           </tbody>
         </table>
 
-        {merged.length === 0 && (
+        {loading && merged.length === 0 ? (
+          <BoardSkeleton />
+        ) : merged.length === 0 ? (
           <div className="empty">
-            {search ? `No results for "${search}"` : "No incidents."}
+            {searching
+              ? "Searching every incident…"
+              : search
+                ? `No results for "${search}"`
+                : "No incidents."}
           </div>
-        )}
+        ) : null}
       </div>
 
       {selected && (

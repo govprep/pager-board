@@ -19,6 +19,13 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#0b0e14",
+  width: "device-width",
+  initialScale: 1,
+  // The installed app runs under a translucent status bar (appleWebApp above),
+  // which hands us the whole screen — including the parts behind the notch and
+  // the home indicator. `cover` is what makes the safe-area insets meaningful;
+  // globals.css pads the topbar and the foot of the list by them.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

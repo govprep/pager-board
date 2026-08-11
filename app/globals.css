@@ -42,6 +42,25 @@
   --badge-added-text:   #bfdbfe;
   --badge-added-border: #3b82f6;
 
+  /* …and the wash a whole row gives on the job's first appearance. The same blue
+     as the badge above — "new" reads as one colour on this board — but a row is a
+     hundred times the area of a badge, so it's the tint of that blue rather than
+     the blue itself. */
+  --row-new-bg: rgba(30, 58, 138, 0.42);
+
+  /* live/degraded state of the Realtime feed */
+  --live:      #22c55e;
+  --live-down: #f59e0b;
+
+  /* keyboard focus ring */
+  --focus: #60a5fa;
+
+  /* Real height of the topbar, republished by PagerBoard whenever it changes —
+     it wraps to two rows on a phone and grows by the status-bar inset once the
+     PWA is installed, so the incident card can't assume the desktop 50px. This
+     is the fallback for the first paint and for pages that don't measure it. */
+  --topbar-h: 50px;
+
   --btn:        #1d4ed8;
   --btn-reset:  #292929;
 
@@ -61,10 +80,32 @@ html, body {
   font-family: var(--sans);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
+  /* The board scrolls inside .list-wrap, so a pull past the top of that list was
+     reaching the document and firing the browser's own pull-to-refresh — which
+     reloads a live board that was already up to date. Contained on the vertical
+     axis only: `none` would also take the horizontal swipe-back gesture with it. */
+  overscroll-behavior-y: contain;
 }
 
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; cursor: pointer; background: none; border: none; color: inherit; }
+
+/* Touch feedback. The grey box iOS paints over a tapped control lags the tap by
+   ~100ms and outlives it, which reads as lag rather than as a response; the
+   :active rules below answer immediately instead. */
+a, button, label, tr { -webkit-tap-highlight-color: transparent; }
+button:active, .map-link:active, .chip:active { opacity: 0.62; }
+
+/* Keyboard focus. Every control here is a bare <button>, so without this there
+   was nothing at all to see when tabbing through the board. :focus-visible, so a
+   ring only appears for the keyboard and never on a mouse click. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.search:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.search input:focus-visible { outline: none; }
 
 .app {
   height: 100vh;
@@ -76,15 +117,26 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
 }
 
 /* ── header ──────────────────────────────────────────── */
+/* Wraps rather than overflows. Every control in here is `flex: none` except the
+   search box, so between ~700px (where the cards take over) and ~820px there was
+   more header than window and the clock and Sign out were simply clipped by the
+   app's `overflow: hidden`. Wrapping costs a second row in that band and nothing
+   at all above it.
+   `min-height` rather than `height` for the same reason: a wrapped header has to
+   be allowed to be taller than one row. Its real height is measured and published
+   as --topbar-h (see PagerBoard) for the incident card to sit below.
+   The padding picks up the notch insets, which are 0 everywhere except a
+   landscape phone running the installed app. */
 .topbar {
   display: flex;
   align-items: center;
-  height: 50px;
+  flex-wrap: wrap;
+  min-height: calc(50px + env(safe-area-inset-top, 0px));
   background: var(--surface);
   border-bottom: 1px solid var(--border-2);
   flex: none;
-  padding: 0 20px;
-  gap: 16px;
+  padding: env(safe-area-inset-top, 0px) max(20px, env(safe-area-inset-right, 0px)) 0 max(20px, env(safe-area-inset-left, 0px));
+  gap: 8px 16px;
   position: relative;
   z-index: 60;
 }
@@ -114,6 +166,7 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
   padding: 0 10px;
   height: 32px;
   width: 240px;
+  min-width: 0; /* the one item allowed to give ground when the header is tight */
 }
 .search:focus-within { border-color: rgba(255,255,255,0.3); }
 .search svg { width: 14px; height: 14px; color: var(--text-3); flex: none; }
@@ -144,9 +197,50 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
   letter-spacing: 0.05em;
   padding-left: 16px;
   border-left: 1px solid var(--border-2);
-  height: 100%;
+  /* `stretch`, not `height: 100%`: the divider should run the full height of the
+     header row it's on. In a wrapped header `100%` resolves against every row at
+     once, which is what used to balloon the clock on iOS. */
+  align-self: stretch;
   display: flex;
   align-items: center;
+}
+
+/* ── live / reconnecting readout ──────────────────────── */
+.live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-3);
+  cursor: default;
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: none;
+  /* Joining the channel: present but making no claim either way. */
+  background: var(--text-3);
+}
+.live.live .live-dot {
+  background: var(--live);
+  box-shadow: 0 0 6px var(--live);
+}
+.live.down { color: var(--live-down); }
+.live.down .live-dot {
+  background: var(--live-down);
+  box-shadow: 0 0 6px var(--live-down);
+  /* Only the broken state moves. A healthy board shouldn't have anything
+     blinking on it — that's reserved for what wants looking at. */
+  animation: live-blink 1s step-end infinite;
+}
+@keyframes live-blink { 50% { opacity: 0.15; } }
+@media (prefers-reduced-motion: reduce) {
+  .live.down .live-dot { animation: none; }
 }
 
 /* ── enable-alerts (PWA push) ────────────────────────── */
@@ -201,7 +295,7 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
   align-items: center;
   justify-content: center;
   background: var(--bg);
-  padding: 24px;
+  padding: max(24px, env(safe-area-inset-top, 0px)) 24px max(24px, env(safe-area-inset-bottom, 0px));
 }
 .auth-card {
   width: 100%;
@@ -237,7 +331,10 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
   border: 1px solid var(--border-2);
   border-radius: 8px;
   padding: 0 14px;
-  font-size: 15px;
+  /* 16px, not 15: iOS Safari zooms the page in on any field smaller than that
+     when it takes focus, and never zooms back out — so the sign-in field left you
+     on a page 1.2× too wide before you'd typed a character. */
+  font-size: 16px;
   color: var(--text);
 }
 .auth-input::placeholder { color: var(--text-3); }
@@ -275,7 +372,17 @@ button { font-family: inherit; cursor: pointer; background: none; border: none; 
 
 
 /* ── table ───────────────────────────────────────────── */
-.list-wrap { flex: 1; overflow-y: auto; }
+.list-wrap {
+  flex: 1;
+  overflow-y: auto;
+  /* Keeps a flick that runs off the end of the list inside the list, instead of
+     handing the overscroll to the page behind it. */
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  /* The installed app owns the whole screen, so the last row would otherwise sit
+     under the home indicator. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
 
 table { width: 100%; border-collapse: collapse; }
 
@@ -328,6 +435,33 @@ tr.date-row td {
 tbody tr.data-row { border-bottom: 1px solid var(--border); }
 tbody tr.data-row:hover { background: var(--surface-2); }
 tbody td { padding: 10px 14px; vertical-align: middle; }
+
+/* The whole row opens the incident, not just the number in it — on a phone that
+   number is a 12px target, which is a miss about as often as a hit. Controls
+   inside the row (Maps) still do their own thing; see the handler in PagerBoard. */
+tbody tr.data-row.clickable { cursor: pointer; }
+tbody tr.data-row.clickable:active { background: var(--surface-2); }
+
+/* …and a job that has only just been paged: the same two hard blue blinks the
+   new-resource badge gives, on the same 800ms step-end beat, so "new" reads as
+   one thing across the board. Here it's the whole row, because here the whole row
+   is what's new — it arrives at the top of a list nobody may be looking at.
+
+   As with the badge, no 0%/100% frame is declared: the implicit ones are the row's
+   own styling, so the off half is whatever the row already looks like (including
+   hovered) and there's no fade at either end.
+
+   Total duration is mirrored by FLASH_MS in PagerBoard.tsx, which removes the
+   class — keep the two in step. */
+@keyframes row-new-pulse {
+  37.5% { background-color: var(--row-new-bg); }
+}
+tbody tr.data-row.arrived { animation: row-new-pulse 800ms step-end 2; }
+
+/* Turned down, not off — one blink across the same window. */
+@media (prefers-reduced-motion: reduce) {
+  tbody tr.data-row.arrived { animation: row-new-pulse 1600ms step-end 1; }
+}
 
 /* incident number */
 .inc-link {
@@ -506,6 +640,54 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   font-size: 13px;
 }
 
+/* Where a whole-table search stands: still running, done, or capped. Sits between
+   the topbar and the list, so it holds its place while the matches scroll. */
+.search-note {
+  flex: none;
+  padding: 8px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-2);
+  color: var(--text-2);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+
+/* ── first-load placeholder ──────────────────────────── */
+/* Row-shaped, at the widths the real columns take, so the board doesn't jump
+   when the data lands. */
+.skeleton { padding: 2px 0; }
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.skeleton-bar {
+  height: 11px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  animation: skeleton-fade 1.4s ease-in-out infinite;
+}
+/* Each bar a beat behind the one before it, so the row reads as one sweep
+   rather than five things pulsing at once. */
+.skeleton-row .skeleton-bar:nth-child(2) { animation-delay: 0.1s; }
+.skeleton-row .skeleton-bar:nth-child(3) { animation-delay: 0.2s; }
+.skeleton-row .skeleton-bar:nth-child(4) { animation-delay: 0.3s; }
+.skeleton-row .skeleton-bar:nth-child(5) { animation-delay: 0.4s; }
+.skeleton-bar.w-inc   { width: 64px; flex: none; }
+.skeleton-bar.w-time  { width: 40px; flex: none; }
+.skeleton-bar.w-type  { width: 110px; flex: none; }
+.skeleton-bar.w-units { width: 22%; }
+.skeleton-bar.w-addr  { flex: 1; min-width: 60px; }
+@keyframes skeleton-fade {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar { animation: none; opacity: 0.55; }
+}
+
 /* Infinite-scroll trigger row at the foot of the table. */
 .load-sentinel td {
   text-align: center;
@@ -517,8 +699,12 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 /* ── incident modal ──────────────────────────────────── */
 .modal-overlay {
   position: fixed;
-  /* Sit below the topbar so the logo/header stay visible. */
-  top: 50px;
+  /* Sit below the topbar so the logo/header stay visible — at whatever height the
+     topbar actually is. It was pinned to the desktop 50px, which on a phone (where
+     the header wraps to two rows) started the overlay part-way up the header, and
+     in the installed app ignored the status-bar inset on top of that. PagerBoard
+     measures the header and publishes --topbar-h. */
+  top: var(--topbar-h);
   left: 0;
   right: 0;
   bottom: 0;
@@ -528,7 +714,7 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 24px 24px max(24px, env(safe-area-inset-bottom, 0px));
 }
 /* Shared by the incident card and the alert-preferences dialog: content-sized,
    scrolling as a whole once it runs out of room. */
@@ -538,7 +724,7 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   border-radius: 10px;
   width: 100%;
   max-width: 520px;
-  max-height: calc(100vh - 50px - 48px);
+  max-height: calc(100dvh - var(--topbar-h) - 48px);
   overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
 }
@@ -866,10 +1052,11 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .raw-filters {
   display: flex;
   gap: 6px;
-  padding: 8px 14px;
+  padding: 8px max(14px, env(safe-area-inset-right, 0px)) 8px max(14px, env(safe-area-inset-left, 0px));
   background: var(--surface);
   border-bottom: 1px solid var(--border-2);
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   flex: none;
 }
 .chip {
@@ -1136,8 +1323,12 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
      stays visible to push the alerts/clock to the right of row 1. */
   .topbar {
     flex-wrap: wrap;
-    height: auto;
-    padding: 8px 12px;
+    min-height: 0;
+    padding:
+      calc(8px + env(safe-area-inset-top, 0px))
+      max(12px, env(safe-area-inset-right, 0px))
+      8px
+      max(12px, env(safe-area-inset-left, 0px));
     gap: 8px;
   }
   .search {
@@ -1145,7 +1336,25 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
     flex: 1 1 auto;  /* shares row 2 with the clock, shrinking as needed */
     width: auto;
     min-width: 0;
+    height: 38px;    /* a thumb target, not a pointer one */
   }
+  /* 16px stops iOS zooming the page in when the field takes focus. The placeholder
+     stays at its smaller size — it's a label, not something being typed into. */
+  .search input { font-size: 16px; }
+
+  /* Everything in the header is tapped rather than clicked here. */
+  .raw-btn,
+  .back-btn,
+  .signout-btn,
+  .alerts-btn { height: 38px; }
+  .search-clear { min-width: 30px; padding: 0 6px; font-size: 18px; }
+  /* The row opens the card too, but the number stays the deliberate target. */
+  .inc-link { padding: 3px 0; }
+
+  /* Dot only — the word is the first thing to go when the header is two rows
+     deep, and the colour is the part that carries the meaning. */
+  .live { order: 1; }
+  .live-label { display: none; }
   /* Clock joins the search on row 2, pinned to the right. Drop the desktop
      `height:100%`: in a wrapped flex header that resolves against the full
      multi-row height (iOS WebKit), ballooning the clock and pushing the
@@ -1232,7 +1441,14 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 
   /* The incident card's height now tracks the overlay's content box, so trimming
      the padding here is what gives it room on a phone. */
-  .modal-overlay { padding: 12px; }
+  .modal-overlay { padding: 12px 12px max(12px, env(safe-area-inset-bottom, 0px)); }
+
+  /* Placeholder rows follow the cards the real rows become: identity on the first
+     line, then the address, then the resources. */
+  .skeleton-row { flex-wrap: wrap; gap: 8px 10px; padding: 12px; }
+  .skeleton-bar.w-type  { width: 90px; }
+  .skeleton-bar.w-addr  { flex: 1 1 100%; }
+  .skeleton-bar.w-units { order: 1; width: 60%; }
 
   /* Alert prefs: the topbar wraps to ~2 rows on a phone, so this overlay can't
      sit at a fixed 50px. Cover the whole screen and let the modal use the

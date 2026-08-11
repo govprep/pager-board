@@ -12,23 +12,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Link from "next/link";
 import type { PagerMessage, RawStatus } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
-
-function fmt(iso: string, secs = false) {
-  return new Date(iso).toLocaleTimeString("en-AU", {
-    hour: "2-digit",
-    minute: "2-digit",
-    ...(secs ? { second: "2-digit" } : {}),
-    hour12: false,
-  });
-}
-
-function dateKey(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+import { fmtTime as fmt, dateKey } from "@/lib/time";
 
 // Only the exceptions get a tag. "On board" is the expected outcome for most
 // traffic, so badging every row with it is noise that buries the interesting
@@ -279,9 +263,10 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search every line…"
+            enterKeyHint="search"
           />
           {search && (
-            <button className="search-clear" onClick={() => setSearch("")}>×</button>
+            <button className="search-clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>
           )}
         </label>
       </header>
