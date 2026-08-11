@@ -708,9 +708,20 @@ export default function PagerBoard({
           else scheduleRefresh();
         },
       )
-      // Called again on every later transition, so a socket that drops and rejoins
-      // moves the readout with it.
-      .subscribe((status) => setLive(status === "SUBSCRIBED" ? "live" : "down"));
+      .subscribe();
+
+    // The live readout is *read* from the channel rather than pushed to us by its
+    // subscribe callback. Strict Mode mounts this effect twice, so the callback
+    // belonging to the channel we just removed could land after the replacement's
+    // — and since a joined channel never reports again, that pinned the readout to
+    // "reconnecting" on a board that was being pushed to perfectly well. Polling a
+    // property can't be raced by anything, and it self-heals within one tick
+    // whatever the socket does.
+    const readState = () => {
+      const s = channel.state;
+      setLive(s === "joined" ? "live" : s === "joining" ? "connecting" : "down");
+    };
+    const liveTimer = setInterval(readState, 2_000);
 
     // Fallback heartbeat poll every 30s in case the Realtime socket drops.
     const t = setInterval(refresh, 30_000);
@@ -721,10 +732,8 @@ export default function PagerBoard({
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       refresh();
-      if (channel.state !== "joined") {
-        setLive("connecting");
-        channel.subscribe((status) => setLive(status === "SUBSCRIBED" ? "live" : "down"));
-      }
+      if (channel.state !== "joined") channel.subscribe();
+      readState();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
@@ -733,6 +742,7 @@ export default function PagerBoard({
     return () => {
       getBrowserClient().removeChannel(channel);
       clearInterval(t);
+      clearInterval(liveTimer);
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
