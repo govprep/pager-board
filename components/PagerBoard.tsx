@@ -95,11 +95,11 @@ function splitAddress(loc: string): { street: string; locality: string } {
   };
 }
 
-// How long a flash stays on: three 1s blinks. Kept in step with the
+// How long a flash stays on: three 1.2s blinks. Kept in step with the
 // `unit-added-pulse` / `row-new-pulse` animations in globals.css — the class is
 // dropped on a timer rather than on animationend so it still clears for someone
 // whose reduced-motion setting has turned the animation down.
-const FLASH_MS = 3000;
+const FLASH_MS = 3600;
 
 // A job has to have been paged this recently to flash as a new arrival. Rows
 // appear on the board for two quite different reasons: one was just paged, and
@@ -194,14 +194,28 @@ type Entry = { key: string; inc: Incident; units: Unit[] };
 // rest of the row comes from. So the type is taken from the most recent page
 // that carried one — see isLaterType().
 //
+// Resources come out in the order they joined the job, oldest first, so one
+// arriving is appended on the right and every badge already there keeps its
+// place. They can't simply be collected in row order: `rows` is sorted newest
+// first, and that order is also what puts the newest job at the top of the board
+// (mergeEntries' insertion order is the board's order — `grouped` never re-sorts
+// it), so iterating the other way to fix the badges would flip the board. Each
+// resource is stamped with the earliest page that mentioned it instead — when it
+// actually joined — and the list is sorted on that at the end. The sort is
+// stable, so resources sharing a page (a FRNSW turnout field naming several)
+// keep the order that page listed them in.
+//
 // Used for what's on screen and, separately, for the change diff below, which
 // has to compare the same picture the board is drawing: a re-typed job and a
 // fuller address both come out of the reconciliation here rather than off any
 // single row.
 function mergeEntries(rows: Incident[]): Entry[] {
+  // `joinedAt` is the working stamp the units are sorted on below; it's dropped
+  // on the way out, so an Entry is exactly what it was before.
+  type Joined = Unit & { joinedAt: string };
   const map = new Map<
     string,
-    { key: string; inc: Incident; units: Unit[]; startedAt: string; typedBy: Incident }
+    { key: string; inc: Incident; units: Joined[]; startedAt: string; typedBy: Incident }
   >();
   for (const i of rows) {
     const key = i.incidentNo || i.id;
@@ -217,8 +231,14 @@ function mergeEntries(rows: Incident[]): Entry[] {
     for (const name of unitTokens(i.unit)) {
       if (!name) continue;
       const held = entry.units.find((u) => u.name === name);
-      if (held) held.stopped ||= i.stoppedAt != null;
-      else entry.units.push({ name, stopped: i.stoppedAt != null });
+      if (held) {
+        held.stopped ||= i.stoppedAt != null;
+        // A resource paged more than once joined on the earliest of them, and
+        // rows arrive here newest first, so this walks the stamp backwards.
+        if (i.receivedAt < held.joinedAt) held.joinedAt = i.receivedAt;
+      } else {
+        entry.units.push({ name, stopped: i.stoppedAt != null, joinedAt: i.receivedAt });
+      }
     }
   }
   return [...map.values()].map(({ key, inc, units, startedAt, typedBy }) => ({
@@ -227,7 +247,9 @@ function mergeEntries(rows: Incident[]): Entry[] {
       inc.receivedAt === startedAt && inc.type === typedBy.type
         ? inc
         : { ...inc, receivedAt: startedAt, type: typedBy.type },
-    units,
+    units: units
+      .sort((a, b) => (a.joinedAt < b.joinedAt ? -1 : a.joinedAt > b.joinedAt ? 1 : 0))
+      .map(({ name, stopped }) => ({ name, stopped })),
   }));
 }
 

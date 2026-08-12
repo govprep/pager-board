@@ -451,8 +451,8 @@ tbody tr.data-row.clickable:active { background: var(--surface-2); }
 
 /* …and a job that has just been paged, or one already on the board that has just
    changed under it — a re-type, a fuller or corrected address, a resource added
-   or stood down. Three hard blue blinks on a 1s step-end beat: 375ms as it
-   stands, then 625ms blue, three times.
+   or stood down. Three hard blue blinks on a 1.2s step-end beat: 450ms as it
+   stands, then 750ms blue, three times.
 
    Three and not two, held longer each: the row is asking to be noticed by
    someone who may not be looking at the board at all, and two short blinks are
@@ -477,12 +477,12 @@ tbody tr.data-row.clickable:active { background: var(--surface-2); }
   37.5% { background-color: var(--row-new-bg); }
 }
 tbody tr.data-row.arrived,
-tbody tr.data-row.changed { animation: row-new-pulse 1000ms step-end 3; }
+tbody tr.data-row.changed { animation: row-new-pulse 1200ms step-end 3; }
 
 /* Turned down, not off — one blink across the same window. */
 @media (prefers-reduced-motion: reduce) {
   tbody tr.data-row.arrived,
-  tbody tr.data-row.changed { animation: row-new-pulse 3000ms step-end 1; }
+  tbody tr.data-row.changed { animation: row-new-pulse 3600ms step-end 1; }
 }
 
 /* incident number */
@@ -616,8 +616,8 @@ tbody tr.data-row.changed { animation: row-new-pulse 1000ms step-end 3; }
 
    The beat is the row's, run backwards. Adding a resource is a change to the job,
    so the row is flashing too (above), and this badge takes the opposite half of
-   every 1s iteration: blue for the row's first 375ms, its own colours for the
-   625ms the row spends blue. So the badge is never doing what the row is doing —
+   every 1.2s iteration: blue for the row's first 450ms, its own colours for the
+   750ms the row spends blue. So the badge is never doing what the row is doing —
    it lights first against a row that hasn't, then goes dark and punches a hole in
    the blue as the row fills in behind it. On a job running six appliances that is
    the whole point: the row says the job changed, and the one badge out of step
@@ -642,13 +642,13 @@ tbody tr.data-row.changed { animation: row-new-pulse 1000ms step-end 3; }
     color: var(--badge-off-text);
   }
 }
-.badge.added { animation: unit-added-pulse 1000ms step-end 3; }
+.badge.added { animation: unit-added-pulse 1200ms step-end 3; }
 
 /* Turned down, not off — the badge still has to announce itself, so reduced
    motion gets a single blink across the same window instead of three. Still the
    inverse of the row, which is turned down the same way. */
 @media (prefers-reduced-motion: reduce) {
-  .badge.added { animation: unit-added-pulse 3000ms step-end 1; }
+  .badge.added { animation: unit-added-pulse 3600ms step-end 1; }
 }
 
 /* status */
