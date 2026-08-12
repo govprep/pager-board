@@ -95,11 +95,11 @@ function splitAddress(loc: string): { street: string; locality: string } {
   };
 }
 
-// How long a flash stays on: two 800ms blinks. Kept in step with the
+// How long a flash stays on: three 1s blinks. Kept in step with the
 // `unit-added-pulse` / `row-new-pulse` animations in globals.css — the class is
 // dropped on a timer rather than on animationend so it still clears for someone
 // whose reduced-motion setting has turned the animation down.
-const FLASH_MS = 1600;
+const FLASH_MS = 3000;
 
 // A job has to have been paged this recently to flash as a new arrival. Rows
 // appear on the board for two quite different reasons: one was just paged, and
@@ -880,7 +880,7 @@ export default function PagerBoard({
   // ── flash what has just changed ──────────────────────────────────────────
   //
   // A live board changes under the person reading it, and every change says so in
-  // the same idiom: two hard blue blinks on the same beat, blue because red on
+  // the same idiom: three hard blue blinks on the same beat, blue because red on
   // this board means stood down.
   //
   // The row is what flashes, for a job just paged and for a job that has changed

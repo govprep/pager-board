@@ -165,16 +165,18 @@ real is re-paged as a structure fire. Both land as *changes to a row already on
 the board*, which is exactly the kind of change someone who has read that row
 will never look at again. So the board points at them:
 
-- **Anything about the job changes** → *the row* blinks blue twice — hard on,
-  hard off, no fade, 500ms blue with a 300ms gap (`tr.data-row.changed` in
-  `globals.css`, `FLASH_MS` in `components/PagerBoard.tsx`). A re-type, an address
+- **Anything about the job changes** → *the row* blinks blue three times — hard
+  on, hard off, no fade, 625ms blue with a 375ms gap (`tr.data-row.changed` in
+  `globals.css`, `FLASH_MS` in `components/PagerBoard.tsx`). Three and not two
+  because the row is trying to catch someone who isn't looking at the board: a
+  glance that arrives late still sees the pattern repeat. A re-type, an address
   that comes through fuller or corrected, a resource added, a resource stood down:
   one flash for all of them, and the same one a newly paged job gets, because
   "this is different from the last time you looked" is a single question and
   shouldn't need two vocabularies to answer. Blue, because red on this board
   means a resource has been *stood down*.
 - **A resource is added** → *that badge* blinks too, on the row's beat run
-  backwards: blue while the row is dark, its own colours through the 500ms the
+  backwards: blue while the row is dark, its own colours through the 625ms the
   row spends blue (`.badge.added`). Being the one thing on the row out of step
   with it is what makes it findable — on a job already running six appliances,
   the row says the job changed and the badge says which resource is the change.
