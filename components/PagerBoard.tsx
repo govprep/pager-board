@@ -210,14 +210,22 @@ type Entry = { key: string; inc: Incident; units: Unit[] };
 // fuller address both come out of the reconciliation here rather than off any
 // single row.
 function mergeEntries(rows: Incident[]): Entry[] {
-  // `joinedAt` is the working stamp the units are sorted on below; it's dropped
-  // on the way out, so an Entry is exactly what it was before.
-  type Joined = Unit & { joinedAt: string };
+  // The working stamps the units are sorted on below; both are dropped on the
+  // way out, so an Entry is exactly what it was before.
+  //
+  // `joinedAt` alone isn't enough. Several lines ingested in one request are
+  // stamped by separate `new Date()` calls in a tight loop (lib/store.ts), so
+  // they routinely land on the identical millisecond — and a stable sort over
+  // ties leaves them in the order they were iterated, which is newest first.
+  // A whole batch of resources would still read backwards. `seq` is the row's
+  // position in `rows`, which for tied stamps is the order the pages came in,
+  // so it breaks those ties back into page order.
+  type Joined = Unit & { joinedAt: string; seq: number };
   const map = new Map<
     string,
     { key: string; inc: Incident; units: Joined[]; startedAt: string; typedBy: Incident }
   >();
-  for (const i of rows) {
+  for (const [seq, i] of rows.entries()) {
     const key = i.incidentNo || i.id;
     let entry = map.get(key);
     if (!entry) {
@@ -235,9 +243,14 @@ function mergeEntries(rows: Incident[]): Entry[] {
         held.stopped ||= i.stoppedAt != null;
         // A resource paged more than once joined on the earliest of them, and
         // rows arrive here newest first, so this walks the stamp backwards.
-        if (i.receivedAt < held.joinedAt) held.joinedAt = i.receivedAt;
+        if (i.receivedAt < held.joinedAt) {
+          held.joinedAt = i.receivedAt;
+          held.seq = seq;
+        } else if (i.receivedAt === held.joinedAt && seq < held.seq) {
+          held.seq = seq;
+        }
       } else {
-        entry.units.push({ name, stopped: i.stoppedAt != null, joinedAt: i.receivedAt });
+        entry.units.push({ name, stopped: i.stoppedAt != null, joinedAt: i.receivedAt, seq });
       }
     }
   }
@@ -248,7 +261,9 @@ function mergeEntries(rows: Incident[]): Entry[] {
         ? inc
         : { ...inc, receivedAt: startedAt, type: typedBy.type },
     units: units
-      .sort((a, b) => (a.joinedAt < b.joinedAt ? -1 : a.joinedAt > b.joinedAt ? 1 : 0))
+      .sort((a, b) =>
+        a.joinedAt < b.joinedAt ? -1 : a.joinedAt > b.joinedAt ? 1 : a.seq - b.seq,
+      )
       .map(({ name, stopped }) => ({ name, stopped })),
   }));
 }
