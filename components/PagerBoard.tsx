@@ -95,11 +95,11 @@ function splitAddress(loc: string): { street: string; locality: string } {
   };
 }
 
-// How long a flash stays on: three 1.2s blinks. Kept in step with the
+// How long a flash stays on: three 1.12s blinks. Kept in step with the
 // `unit-added-pulse` / `row-new-pulse` animations in globals.css — the class is
 // dropped on a timer rather than on animationend so it still clears for someone
 // whose reduced-motion setting has turned the animation down.
-const FLASH_MS = 3600;
+const FLASH_MS = 3360;
 
 // A job has to have been paged this recently to flash as a new arrival. Rows
 // appear on the board for two quite different reasons: one was just paged, and

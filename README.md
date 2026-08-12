@@ -166,7 +166,7 @@ the board*, which is exactly the kind of change someone who has read that row
 will never look at again. So the board points at them:
 
 - **Anything about the job changes** → *the row* blinks blue three times — hard
-  on, hard off, no fade, 750ms blue with a 450ms gap (`tr.data-row.changed` in
+  on, hard off, no fade, 700ms blue with a 420ms gap (`tr.data-row.changed` in
   `globals.css`, `FLASH_MS` in `components/PagerBoard.tsx`). Three and not two
   because the row is trying to catch someone who isn't looking at the board: a
   glance that arrives late still sees the pattern repeat. A re-type, an address
@@ -176,7 +176,7 @@ will never look at again. So the board points at them:
   shouldn't need two vocabularies to answer. Blue, because red on this board
   means a resource has been *stood down*.
 - **A resource is added** → *that badge* blinks too, on the row's beat run
-  backwards: blue while the row is dark, its own colours through the 750ms the
+  backwards: blue while the row is dark, its own colours through the 700ms the
   row spends blue (`.badge.added`). Being the one thing on the row out of step
   with it is what makes it findable — on a job already running six appliances,
   the row says the job changed and the badge says which resource is the change.
