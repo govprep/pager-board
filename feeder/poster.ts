@@ -1,4 +1,5 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { createServerClient } from "../lib/supabase-server";
 import { parsePagerMessage, hasIncidentNumber } from "../lib/parser";
 import { parseStandDown, applyStandDowns, type StandDown } from "../lib/standdown";
 import { passesBoardFilter } from "../lib/filter";
@@ -48,9 +49,7 @@ export function makeWriter(): Writer {
     );
   }
 
-  const db: SupabaseClient = createClient(url, key, {
-    auth: { persistSession: false },
-  });
+  const db: SupabaseClient = createServerClient(url, key);
 
   // All sources share one writer, so this serialises the compare-then-upsert
   // across every one of them. See lib/mutex.ts for why that matters.

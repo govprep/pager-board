@@ -15,7 +15,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "../lib/supabase-server";
 import { attachFireWeather } from "../lib/fbi";
 import type { IncidentRow } from "../lib/incident-merge";
 
@@ -48,7 +48,7 @@ async function main() {
   if (!url || !key) {
     throw new Error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set");
   }
-  const db = createClient(url, key, { auth: { persistSession: false } });
+  const db = createServerClient(url, key);
 
   const n = Number(process.argv[2]) || 10;
   const delayMs = Number(process.argv[3]) || 2000;

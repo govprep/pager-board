@@ -16,7 +16,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "../lib/supabase-server";
 import { alertKeysFor, mergeAlertKeys, wantsIncident, type AlertPrefs } from "../lib/alert-prefs";
 
 function loadEnvLocal() {
@@ -44,7 +44,7 @@ if (!url || !key) {
   console.error("Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local");
   process.exit(1);
 }
-const db = createClient(url, key, { auth: { persistSession: false } });
+const db = createServerClient(url, key);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = any;

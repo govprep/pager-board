@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "../lib/supabase-server";
 
 function loadEnvLocal() {
   const envPath = join(import.meta.dirname ?? __dirname, "..", ".env.local");
@@ -42,7 +42,7 @@ if (!url || !key) {
   process.exit(1);
 }
 const boardUrl = (process.env.BOARD_URL || "http://localhost:3000").replace(/\/$/, "");
-const db = createClient(url, key, { auth: { persistSession: false } });
+const db = createServerClient(url, key);
 
 // Short, unambiguous code — no 0/O/1/I to misread when typing on a phone.
 function genCode(): string {

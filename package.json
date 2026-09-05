@@ -15,6 +15,7 @@
     "backfill-fbi": "tsx scripts/backfill-fbi.ts"
   },
   "dependencies": {
+    "@supabase/realtime-js": "^2.108.2",
     "@supabase/supabase-js": "^2.108.2",
     "jose": "^6.2.3",
     "mapbox-gl": "^3.25.0",
@@ -23,13 +24,15 @@
     "react-dom": "^19.2.7",
     "server-only": "^0.0.1",
     "socket.io-client": "^2.5.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "22.15.21",
     "@types/react": "19.1.6",
     "@types/react-dom": "19.1.5",
     "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.1",
     "telegram": "^2.26.22",
     "tsx": "^4.19.2",
     "typescript": "5.8.3"
