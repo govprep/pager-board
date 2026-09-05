@@ -212,6 +212,11 @@ alter table public.incidents add column if not exists fbi_observed_at  timestamp
 -- job re-paged to a second brigade a minute later reuses this figure instead
 -- of hitting BOM again. Bookkeeping only — not read by the board.
 alter table public.incidents add column if not exists fbi_computed_at  timestamptz;
+-- Raw station reading behind the FBI — temp, humidity, wind speed/gust/dir —
+-- for the modal's Weather tab. { tempC, humidityPct, windDir, windSpdKmh,
+-- windGustKmh } | null. One JSONB column rather than five, matching the
+-- `fields` column's precedent for a per-row grab-bag.
+alter table public.incidents add column if not exists fbi_observation   jsonb;
 
 -- ── Stand-down flags ─────────────────────────────────────────────────────────
 -- Set when a STOP / STAND DOWN / NNTA message arrives referencing this incident

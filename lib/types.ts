@@ -15,6 +15,11 @@ export interface FireWeather {
   distanceKm: number;
   /** ISO timestamp of the station reading these numbers came from. */
   observedAt: string;
+  tempC: number | null;
+  humidityPct: number | null;
+  windDir: string | null;
+  windSpdKmh: number | null;
+  windGustKmh: number | null;
 }
 
 export interface Incident {

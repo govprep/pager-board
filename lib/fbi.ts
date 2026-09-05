@@ -23,6 +23,15 @@ const CACHE_MS = 5 * 60_000;
 // fetch, so a quiet job's first page after a lull still gets a fresh number.
 const THROTTLE_MS = 5 * 60_000;
 
+/** The raw observation values the modal's Weather tab shows. */
+export interface FireObservation {
+  tempC: number | null;
+  humidityPct: number | null;
+  windDir: string | null;
+  windSpdKmh: number | null;
+  windGustKmh: number | null;
+}
+
 interface Station {
   name: string;
   lat: number;
@@ -31,6 +40,7 @@ interface Station {
   secondaryFbi: number;
   /** When this station's reading was taken (unix seconds). */
   observedAtEpoch: number;
+  observation: FireObservation;
 }
 
 let cache: { at: number; stations: Station[] } | null = null;
@@ -62,6 +72,13 @@ async function fetchStations(): Promise<Station[]> {
       primaryFbi: obs.primary_fbi,
       secondaryFbi: obs.secondary_fbi ?? obs.primary_fbi,
       observedAtEpoch: obs.seconds_since_epoch,
+      observation: {
+        tempC: typeof obs.temp === "number" ? obs.temp : null,
+        humidityPct: typeof obs.rh === "number" ? obs.rh : null,
+        windDir: typeof obs.wind_dir === "string" ? obs.wind_dir : null,
+        windSpdKmh: typeof obs.wnd_spd_kmh === "number" ? obs.wnd_spd_kmh : null,
+        windGustKmh: typeof obs.wnd_gust_spd_kmh === "number" ? obs.wnd_gust_spd_kmh : null,
+      },
     });
   }
   return stations;
@@ -118,6 +135,7 @@ interface StoredFireWeather {
   fbi_distance_km: number;
   fbi_observed_at: string;
   fbi_computed_at: string;
+  fbi_observation: FireObservation;
 }
 
 /**
@@ -146,6 +164,7 @@ export async function attachFireWeather<T extends IncidentRow>(
     r.fbi_distance_km = null;
     r.fbi_observed_at = null;
     r.fbi_computed_at = null;
+    r.fbi_observation = null;
   }
 
   const byIncident = new Map<string, T[]>();
@@ -169,7 +188,10 @@ export async function attachFireWeather<T extends IncidentRow>(
     for (let i = 0; i < incidentNos.length; i += 200) {
       const { data, error } = await db
         .from("incidents")
-        .select("incident_no, primary_fbi, secondary_fbi, fbi_station, fbi_distance_km, fbi_observed_at, fbi_computed_at")
+        .select(
+          `incident_no, primary_fbi, secondary_fbi, fbi_station, fbi_distance_km,
+           fbi_observed_at, fbi_computed_at, fbi_observation`,
+        )
         .in("incident_no", incidentNos.slice(i, i + 200))
         .not("fbi_computed_at", "is", null);
       if (error) {
@@ -195,6 +217,7 @@ export async function attachFireWeather<T extends IncidentRow>(
         r.fbi_distance_km = prior.fbi_distance_km;
         r.fbi_observed_at = prior.fbi_observed_at;
         r.fbi_computed_at = prior.fbi_computed_at;
+        r.fbi_observation = prior.fbi_observation;
       }
       continue;
     }
@@ -223,6 +246,7 @@ export async function attachFireWeather<T extends IncidentRow>(
       r.fbi_distance_km = distanceKm;
       r.fbi_observed_at = observedAt;
       r.fbi_computed_at = computedAt;
+      r.fbi_observation = best.observation;
     }
   }
 

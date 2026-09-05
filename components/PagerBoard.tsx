@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import type { Incident, PagerMessage, RawStatus } from "@/lib/types";
+import type { Incident, FireWeather, PagerMessage, RawStatus } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { toIncident } from "@/lib/incident-row";
 import { hasIncidentNumber } from "@/lib/parser";
@@ -425,7 +425,58 @@ function IncidentMessages({ state }: { state: MessagesState }) {
   );
 }
 
-type ModalTab = "details" | "messages";
+type ModalTab = "details" | "weather" | "messages";
+
+// The nearest station's full reading — everything Details only summarises as
+// one FBI line. A plain read: nothing here is fetched (it rides in on the
+// incident row already), so unlike Messages there's no loading state.
+function FireWeatherPanel({ fw }: { fw: FireWeather }) {
+  return (
+    <div className="modal-body">
+      <div className="modal-field">
+        <span className="modal-label">Station</span>
+        <span className="modal-value">
+          {fw.stationName} <span className="dim">({fw.distanceKm} km away)</span>
+        </span>
+      </div>
+      <div className="modal-field">
+        <span className="modal-label">Observed</span>
+        <span className="modal-value">
+          {fmt(fw.observedAt)} <span className="dim">({relativeAge(fw.observedAt)} ago)</span>
+        </span>
+      </div>
+      <div className="modal-field">
+        <span className="modal-label">Fire Behaviour Index</span>
+        <span className="modal-value">{fw.primaryFbi} primary / {fw.secondaryFbi} secondary</span>
+      </div>
+      <div className="modal-field">
+        <span className="modal-label">Temperature</span>
+        <span className="modal-value">
+          {fw.tempC != null ? `${fw.tempC}°C` : <span className="dim">—</span>}
+        </span>
+      </div>
+      <div className="modal-field">
+        <span className="modal-label">Humidity</span>
+        <span className="modal-value">
+          {fw.humidityPct != null ? `${fw.humidityPct}%` : <span className="dim">—</span>}
+        </span>
+      </div>
+      <div className="modal-field">
+        <span className="modal-label">Wind</span>
+        <span className="modal-value">
+          {fw.windSpdKmh != null ? (
+            <>
+              {fw.windDir} {fw.windSpdKmh} km/h
+              {fw.windGustKmh != null && <span className="dim"> (gusting {fw.windGustKmh} km/h)</span>}
+            </>
+          ) : (
+            <span className="dim">—</span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 function IncidentModal({
   entry,
@@ -508,6 +559,16 @@ function IncidentModal({
             >
               Details
             </button>
+            {inc.fireWeather && (
+              <button
+                role="tab"
+                aria-selected={tab === "weather"}
+                className={`modal-tab${tab === "weather" ? " on" : ""}`}
+                onClick={() => setTab("weather")}
+              >
+                Weather
+              </button>
+            )}
             <button
               role="tab"
               aria-selected={tab === "messages"}
@@ -581,6 +642,8 @@ function IncidentModal({
             </div>
           )}
         </div>
+
+        {tab === "weather" && inc.fireWeather && <FireWeatherPanel fw={inc.fireWeather} />}
 
         {tab === "messages" && <IncidentMessages state={messages} />}
       </div>

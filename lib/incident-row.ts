@@ -29,6 +29,11 @@ export function toIncident(row: any): Incident {
             stationName: row.fbi_station ?? "",
             distanceKm: row.fbi_distance_km,
             observedAt: row.fbi_observed_at,
+            tempC: row.fbi_observation?.tempC ?? null,
+            humidityPct: row.fbi_observation?.humidityPct ?? null,
+            windDir: row.fbi_observation?.windDir ?? null,
+            windSpdKmh: row.fbi_observation?.windSpdKmh ?? null,
+            windGustKmh: row.fbi_observation?.windGustKmh ?? null,
           }
         : null,
   };

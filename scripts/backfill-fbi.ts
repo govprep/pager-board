@@ -88,6 +88,7 @@ async function main() {
         fbi_distance_km: r.fbi_distance_km,
         fbi_observed_at: r.fbi_observed_at,
         fbi_computed_at: r.fbi_computed_at,
+        fbi_observation: r.fbi_observation,
       })
       .eq("id", r.id);
     if (updErr) {

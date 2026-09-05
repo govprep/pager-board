@@ -18,7 +18,7 @@ import { supabase } from "./supabase";
 // lean so large pages stay fast. (Drops `fields`, `slacked_at`, etc.)
 const LIST_COLUMNS =
   "id, incident_no, type, unit, location, coords, received_at, raw, stopped_at, " +
-  "primary_fbi, secondary_fbi, fbi_station, fbi_distance_km, fbi_observed_at";
+  "primary_fbi, secondary_fbi, fbi_station, fbi_distance_km, fbi_observed_at, fbi_observation";
 
 // Columns a board search looks through. `raw` is the whole pager line and so
 // covers most of it, but the parsed columns are searched in their own right:
