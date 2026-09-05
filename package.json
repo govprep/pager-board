@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "node --import tsx --test feeder/*.test.ts",
     "feeder": "tsx feeder/index.ts",
     "feeder:auth-telegram": "tsx feeder/auth-telegram.ts",
     "seed:live": "tsx scripts/seed-live.ts",

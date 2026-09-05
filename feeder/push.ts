@@ -9,6 +9,7 @@ import {
 } from "../lib/alert-prefs";
 import { toIncident as rowToIncident } from "../lib/incident-row";
 import { applianceUnits } from "../lib/units";
+import { makeMutex } from "../lib/mutex";
 import { friendlyType } from "./type-names";
 
 // Sends web-push notifications to subscribed phones. Two kinds of alert:
@@ -46,6 +47,16 @@ import { friendlyType } from "./type-names";
 // Self-filters to pages not yet pushed via incidents.pushed_at, so re-upserts of
 // unchanged rows cost nothing and restarts never double-notify. Multiple unit
 // pages of a brand-new incident collapse into a single new-incident alert.
+//
+// That collapse only holds if the runs don't overlap. pushed_at is read at the
+// top of a run and written at the bottom, with the push services' round-trips in
+// between, so two runs that start inside that window both read "not yet pushed"
+// and both send the *new incident* alert for the same job. It is not a rare
+// window: every source runs concurrently in one process, the same job reaches
+// several of them within seconds, and each fans out on its own batch — which had
+// 82 new-incident alerts going out for 73 real incidents over one 11-hour run.
+// So the whole fan-out is serialised below, the way the write path already
+// serialises its own compare-then-upsert (see lib/mutex.ts).
 //
 // No-op unless the VAPID env vars are set, so the feeder runs fine without it.
 
@@ -216,6 +227,14 @@ interface Group {
  * with the full batch of just-upserted ids; it self-filters via pushed_at.
  */
 export async function pushPending(db: SupabaseClient, ids: string[]): Promise<void> {
+  return serialize(() => fanOut(db, ids));
+}
+
+// One at a time, process-wide — module scope rather than per-writer, so every
+// caller queues on the same lock regardless of which writer it came through.
+const serialize = makeMutex();
+
+async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
   if (!configure() || !ids.length) return;
 
   await sweepFollows(db);
