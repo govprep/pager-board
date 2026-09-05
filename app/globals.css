@@ -1445,7 +1445,7 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
 
   .list-wrap tr.data-row {
     display: grid;
-    grid-template-columns: auto auto 1fr;
+    grid-template-columns: auto auto 1fr auto;
     gap: 8px 10px;
     padding: 12px;
     border-bottom: 1px solid var(--border);
@@ -1453,21 +1453,25 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   .list-wrap tr.data-row:hover { background: var(--surface-2); }
   .list-wrap tr.data-row td { padding: 0; vertical-align: unset; }
 
-  /* The card keeps its reading order — number, time, type, then FBI, address,
-     resources — whatever order the desktop columns are in. Cells are placed by
-     position, so these indices track the <th> order in PagerBoard.tsx:
-     1 incident · 2 time · 3 type · 4 FBI · 5 call sign · 6 address. */
-  /* Row 1: incident no | time | type (end) */
+  /* The card keeps its reading order — number, time, type (+ FBI when this job
+     has one), then address, then resources — whatever order the desktop
+     columns are in. Cells are placed by position, so these indices track the
+     <th> order in PagerBoard.tsx: 1 incident · 2 time · 3 type · 4 FBI ·
+     5 call sign · 6 address.
+     FBI sits on the triage line rather than its own row at the card's foot:
+     it's severity info for the same handful of jobs Type already flags, and
+     it's empty on most jobs — a whole extra row would mean a nearly-blank
+     row on every AFA/MVA/structure fire, which is most of the board. The 4th
+     `auto` grid column costs nothing when that cell has no content. */
+  /* Row 1: incident no | time | type | FBI (end) */
   .list-wrap tr.data-row td:nth-child(1) { grid-column: 1; grid-row: 1; align-self: center; }
   .list-wrap tr.data-row td:nth-child(2) { grid-column: 2; grid-row: 1; align-self: center; }
-  .list-wrap tr.data-row td:nth-child(3) { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; }
+  .list-wrap tr.data-row td:nth-child(3) { grid-column: 3; grid-row: 1; align-self: center; }
+  .list-wrap tr.data-row td:nth-child(4) { grid-column: 4; grid-row: 1; justify-self: end; align-self: center; }
   /* Row 2: address (full width) */
   .list-wrap tr.data-row td:nth-child(6) { grid-column: 1 / -1; grid-row: 2; }
   /* Row 3: resources (full width, wrap left-to-right) */
   .list-wrap tr.data-row td:nth-child(5) { grid-column: 1 / -1; grid-row: 3; }
-  /* Row 4: FBI — "—" like every other column when the job doesn't qualify,
-     same as Address and Call Sign already do for FRNSW's address-less pages. */
-  .list-wrap tr.data-row td:nth-child(4) { grid-column: 1 / -1; grid-row: 4; }
 
   /* On a phone Maps is a thumb target, not a footnote — the desktop chip is
      about 20px tall, which is a miss as often as a hit. Here the address is a

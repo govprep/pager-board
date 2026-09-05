@@ -1256,15 +1256,17 @@ export default function PagerBoard({
                           : <span className="dim">—</span>}
                       </td>
                       <td>
-                        {i.fireWeather ? (
+                        {/* No dash placeholder here, unlike the other columns —
+                            this only applies to a small slice of jobs, and a
+                            "—" on every AFA/MVA/structure fire would just be
+                            noise repeated down the whole board. */}
+                        {i.fireWeather && (
                           <span
                             className="fbi-tag"
                             title={`${i.fireWeather.stationName} · ${i.fireWeather.distanceKm} km away · observation ${relativeAge(i.fireWeather.observedAt)} old`}
                           >
                             {i.fireWeather.primaryFbi} / {i.fireWeather.secondaryFbi}
                           </span>
-                        ) : (
-                          <span className="dim">—</span>
                         )}
                       </td>
                       <td>
