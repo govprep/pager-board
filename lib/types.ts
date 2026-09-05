@@ -13,6 +13,8 @@ export interface FireWeather {
   secondaryFbi: number;
   stationName: string;
   distanceKm: number;
+  /** ISO timestamp of the station reading these numbers came from. */
+  observedAt: string;
 }
 
 export interface Incident {

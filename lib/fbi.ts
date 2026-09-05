@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { IncidentRow } from "./incident-merge";
 
 // Fire Behaviour Index lookup — attaches the nearest BOM AWS station's current
@@ -15,12 +16,21 @@ const BOM_URL =
 // so there's no point asking more often than that.
 const CACHE_MS = 5 * 60_000;
 
+// A job re-paged to another brigade a minute later reuses the figure already
+// on the board rather than recomputing one — the weather hasn't moved, and a
+// number that changes on every re-page reads as noisier than it is. Keyed per
+// incident_no (see attachFireWeather), not wall-clock since the last BOM
+// fetch, so a quiet job's first page after a lull still gets a fresh number.
+const THROTTLE_MS = 5 * 60_000;
+
 interface Station {
   name: string;
   lat: number;
   lng: number;
   primaryFbi: number;
   secondaryFbi: number;
+  /** When this station's reading was taken (unix seconds). */
+  observedAtEpoch: number;
 }
 
 let cache: { at: number; stations: Station[] } | null = null;
@@ -44,12 +54,14 @@ async function fetchStations(): Promise<Station[]> {
     const obs = row?.observation_data;
     if (typeof info?.latitude !== "number" || typeof info?.longitude !== "number") continue;
     if (typeof obs?.primary_fbi !== "number") continue;
+    if (typeof obs?.seconds_since_epoch !== "number") continue;
     stations.push({
       name: info.station_name ?? info.description ?? "",
       lat: info.latitude,
       lng: info.longitude,
       primaryFbi: obs.primary_fbi,
       secondaryFbi: obs.secondary_fbi ?? obs.primary_fbi,
+      observedAtEpoch: obs.seconds_since_epoch,
     });
   }
   return stations;
@@ -97,29 +109,98 @@ export function isFireWeatherType(type: string): boolean {
   return INCLUDE_TYPE_RE.test(t);
 }
 
+/** The stored snapshot attachFireWeather reads back to decide whether a job's
+ *  figure is fresh enough to reuse. */
+interface StoredFireWeather {
+  primary_fbi: number;
+  secondary_fbi: number;
+  fbi_station: string;
+  fbi_distance_km: number;
+  fbi_observed_at: string;
+  fbi_computed_at: string;
+}
+
 /**
  * Stamp every row with the nearest station's primary/secondary FBI, or null on
- * all four fields when the row doesn't qualify (wrong type, no coords, or the
- * BOM feed isn't reachable). Always sets all four so a batch's rows keep
+ * all fields when the row doesn't qualify (wrong type, no coords, or the BOM
+ * feed isn't reachable). Always sets every field so a batch's rows keep
  * uniform keys for the upsert — see feeder/poster.ts and lib/store.ts.
+ *
+ * Rows are grouped by incident_no, not by row id: several rows can be
+ * different brigades paged to the same job, and they must all show the same
+ * figure. One BOM lookup covers the whole group, and a group whose incident_no
+ * already has a figure computed within THROTTLE_MS reuses it unchanged rather
+ * than recomputing — pass `force: true` (scripts/backfill-fbi.ts) to skip that
+ * check for a deliberate one-off recompute.
  */
-export async function attachFireWeather<T extends IncidentRow>(rows: T[]): Promise<T[]> {
-  const needsStations = rows.some(
-    (r) => r.coords != null && isFireWeatherType(String((r as Record<string, unknown>).type ?? "")),
-  );
-  const stations = needsStations ? await getStations() : [];
-
+export async function attachFireWeather<T extends IncidentRow>(
+  db: SupabaseClient,
+  rows: T[],
+  opts: { force?: boolean } = {},
+): Promise<T[]> {
   for (const row of rows) {
     const r = row as IncidentRow & Record<string, unknown>;
     r.primary_fbi = null;
     r.secondary_fbi = null;
     r.fbi_station = null;
     r.fbi_distance_km = null;
+    r.fbi_observed_at = null;
+    r.fbi_computed_at = null;
+  }
 
-    if (stations.length === 0) continue;
+  const byIncident = new Map<string, T[]>();
+  for (const row of rows) {
+    const r = row as IncidentRow & Record<string, unknown>;
     if (r.coords == null || !isFireWeatherType(String(r.type ?? ""))) continue;
+    const incNo = String(r.incident_no || r.id);
+    if (!byIncident.has(incNo)) byIncident.set(incNo, []);
+    byIncident.get(incNo)!.push(row);
+  }
+  if (byIncident.size === 0) return rows;
 
-    const c = r.coords as { lat: number; lng: number };
+  const stations = await getStations();
+  if (stations.length === 0) return rows;
+
+  // What's already on the board for these incident numbers, so a re-page
+  // within the throttle window can reuse it instead of recomputing.
+  const stored = new Map<string, StoredFireWeather>();
+  if (!opts.force) {
+    const incidentNos = [...byIncident.keys()];
+    for (let i = 0; i < incidentNos.length; i += 200) {
+      const { data, error } = await db
+        .from("incidents")
+        .select("incident_no, primary_fbi, secondary_fbi, fbi_station, fbi_distance_km, fbi_observed_at, fbi_computed_at")
+        .in("incident_no", incidentNos.slice(i, i + 200))
+        .not("fbi_computed_at", "is", null);
+      if (error) {
+        console.error("[fbi] stored lookup:", error.message);
+        continue;
+      }
+      for (const row of (data ?? []) as (StoredFireWeather & { incident_no: string })[]) {
+        const held = stored.get(row.incident_no);
+        if (!held || row.fbi_computed_at > held.fbi_computed_at) stored.set(row.incident_no, row);
+      }
+    }
+  }
+
+  const now = Date.now();
+  for (const [incNo, group] of byIncident) {
+    const prior = stored.get(incNo);
+    if (prior && now - new Date(prior.fbi_computed_at).getTime() < THROTTLE_MS) {
+      for (const row of group) {
+        const r = row as IncidentRow & Record<string, unknown>;
+        r.primary_fbi = prior.primary_fbi;
+        r.secondary_fbi = prior.secondary_fbi;
+        r.fbi_station = prior.fbi_station;
+        r.fbi_distance_km = prior.fbi_distance_km;
+        r.fbi_observed_at = prior.fbi_observed_at;
+        r.fbi_computed_at = prior.fbi_computed_at;
+      }
+      continue;
+    }
+
+    // Every row in the group is the same job, so the same coordinates.
+    const c = (group[0] as IncidentRow).coords as { lat: number; lng: number };
     let best: Station | null = null;
     let bestKm = Infinity;
     for (const s of stations) {
@@ -129,12 +210,21 @@ export async function attachFireWeather<T extends IncidentRow>(rows: T[]): Promi
         best = s;
       }
     }
-    if (best) {
+    if (!best) continue;
+
+    const computedAt = new Date().toISOString();
+    const observedAt = new Date(best.observedAtEpoch * 1000).toISOString();
+    const distanceKm = Math.round(bestKm * 10) / 10;
+    for (const row of group) {
+      const r = row as IncidentRow & Record<string, unknown>;
       r.primary_fbi = best.primaryFbi;
       r.secondary_fbi = best.secondaryFbi;
       r.fbi_station = best.name;
-      r.fbi_distance_km = Math.round(bestKm * 10) / 10;
+      r.fbi_distance_km = distanceKm;
+      r.fbi_observed_at = observedAt;
+      r.fbi_computed_at = computedAt;
     }
   }
+
   return rows;
 }

@@ -132,7 +132,7 @@ export function makeWriter(): Writer {
     ).map(({ row }) => row);
 
     // Nearest station's Fire Behaviour Index, for the RFS calls it applies to.
-    const withFireWeather = await attachFireWeather(unique);
+    const withFireWeather = await attachFireWeather(db, unique);
 
     // Then the same comparison against what's already on the board, so a thinner
     // copy of a page can't overwrite a fuller one that landed earlier. Held

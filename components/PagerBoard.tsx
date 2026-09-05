@@ -13,7 +13,7 @@ import EnableAlerts from "@/components/EnableAlerts";
 import IncidentMap from "@/components/IncidentMap";
 import Clock from "@/components/Clock";
 import LiveDot, { type LiveState } from "@/components/LiveDot";
-import { fmtTime as fmt, dateKey } from "@/lib/time";
+import { fmtTime as fmt, dateKey, relativeAge } from "@/lib/time";
 import { pushSupported, isFollowing, followIncident, unfollowIncident } from "@/lib/push-client";
 
 // "09/08 14:32:07" — a job's pages can straddle midnight, so the per-incident
@@ -540,6 +540,9 @@ function IncidentModal({
               <span className="modal-value">
                 {inc.fireWeather.primaryFbi} primary / {inc.fireWeather.secondaryFbi} secondary
                 <span className="dim"> — {inc.fireWeather.stationName} ({inc.fireWeather.distanceKm} km)</span>
+                <span className="dim">
+                  {" "}· observation {relativeAge(inc.fireWeather.observedAt)} old ({fmt(inc.fireWeather.observedAt)})
+                </span>
               </span>
             </div>
           )}
@@ -1193,7 +1196,7 @@ export default function PagerBoard({
                         {i.fireWeather ? (
                           <span
                             className="fbi-tag"
-                            title={`${i.fireWeather.stationName} · ${i.fireWeather.distanceKm} km away`}
+                            title={`${i.fireWeather.stationName} · ${i.fireWeather.distanceKm} km away · observation ${relativeAge(i.fireWeather.observedAt)} old`}
                           >
                             {i.fireWeather.primaryFbi} / {i.fireWeather.secondaryFbi}
                           </span>

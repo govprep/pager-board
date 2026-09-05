@@ -205,6 +205,13 @@ alter table public.incidents add column if not exists primary_fbi      numeric;
 alter table public.incidents add column if not exists secondary_fbi    numeric;
 alter table public.incidents add column if not exists fbi_station      text;
 alter table public.incidents add column if not exists fbi_distance_km  numeric;
+-- When the BOM station took the reading these numbers came from — shown in
+-- the modal so a stale figure (see the throttle in lib/fbi.ts) reads honestly.
+alter table public.incidents add column if not exists fbi_observed_at  timestamptz;
+-- When *we* last looked it up, keyed per incident_no rather than per row: a
+-- job re-paged to a second brigade a minute later reuses this figure instead
+-- of hitting BOM again. Bookkeeping only — not read by the board.
+alter table public.incidents add column if not exists fbi_computed_at  timestamptz;
 
 -- ── Stand-down flags ─────────────────────────────────────────────────────────
 -- Set when a STOP / STAND DOWN / NNTA message arrives referencing this incident

@@ -18,7 +18,7 @@ import { supabase } from "./supabase";
 // lean so large pages stay fast. (Drops `fields`, `slacked_at`, etc.)
 const LIST_COLUMNS =
   "id, incident_no, type, unit, location, coords, received_at, raw, stopped_at, " +
-  "primary_fbi, secondary_fbi, fbi_station, fbi_distance_km";
+  "primary_fbi, secondary_fbi, fbi_station, fbi_distance_km, fbi_observed_at";
 
 // Columns a board search looks through. `raw` is the whole pager line and so
 // covers most of it, but the parsed columns are searched in their own right:
@@ -149,7 +149,7 @@ export async function addRawMessages(input: string | string[]): Promise<Incident
   ).map(({ row }) => row);
 
   // Nearest station's Fire Behaviour Index, for the RFS calls it applies to.
-  const withFireWeather = await attachFireWeather(rows);
+  const withFireWeather = await attachFireWeather(supabase, rows);
 
   const kept = await dropWeakerThanStored(supabase, withFireWeather, "api");
   if (kept.length === 0) return [];

@@ -12,7 +12,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Link from "next/link";
 import type { PagerMessage, RawStatus } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
-import { fmtTime as fmt, dateKey } from "@/lib/time";
+import { fmtTime as fmt, dateKey, relativeAge } from "@/lib/time";
 
 // Only the exceptions get a tag. "On board" is the expected outcome for most
 // traffic, so badging every row with it is noise that buries the interesting
@@ -21,17 +21,6 @@ const STATUS_TAG: Partial<Record<RawStatus, string>> = {
   standdown: "STAND DOWN",
   dropped: "DROPPED",
 };
-
-/** "2m", "4h", "6d" — compact age, for the techno right-hand gutter. */
-function age(iso: string, now: number): string {
-  const secs = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
-}
 
 // The filter chips. `null` = no status filter.
 const FILTERS: { key: string; label: string; status: RawStatus | null }[] = [
@@ -305,7 +294,7 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
                   <tr key={m.hash} className={`data-row raw-row ${m.status}`}>
                     <td>
                       <span className="time-cell">{fmt(m.receivedAt)}</span>
-                      {now && <span className="raw-age">{age(m.receivedAt, now)}</span>}
+                      {now && <span className="raw-age">{relativeAge(m.receivedAt, now)}</span>}
                     </td>
                     <td>
                       {m.capcode

@@ -28,6 +28,7 @@ export function toIncident(row: any): Incident {
             secondaryFbi: row.secondary_fbi,
             stationName: row.fbi_station ?? "",
             distanceKm: row.fbi_distance_km,
+            observedAt: row.fbi_observed_at,
           }
         : null,
   };
