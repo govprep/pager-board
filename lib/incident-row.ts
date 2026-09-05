@@ -21,5 +21,14 @@ export function toIncident(row: any): Incident {
     fields: row.fields ?? {},
     raw: row.raw,
     stoppedAt: row.stopped_at ?? null,
+    fireWeather:
+      row.primary_fbi != null
+        ? {
+            primaryFbi: row.primary_fbi,
+            secondaryFbi: row.secondary_fbi,
+            stationName: row.fbi_station ?? "",
+            distanceKm: row.fbi_distance_km,
+          }
+        : null,
   };
 }

@@ -4,6 +4,7 @@ import { parseStandDown, applyStandDowns, type StandDown } from "../lib/standdow
 import { passesBoardFilter } from "../lib/filter";
 import { recordRawMessages } from "../lib/raw-feed";
 import { collapseById, dropWeakerThanStored, type IncidentRow } from "../lib/incident-merge";
+import { attachFireWeather } from "../lib/fbi";
 import { makeMutex } from "../lib/mutex";
 import type { Incident } from "../lib/types";
 import { postPending } from "./slack";
@@ -130,11 +131,14 @@ export function makeWriter(): Writer {
       })),
     ).map(({ row }) => row);
 
+    // Nearest station's Fire Behaviour Index, for the RFS calls it applies to.
+    const withFireWeather = await attachFireWeather(unique);
+
     // Then the same comparison against what's already on the board, so a thinner
     // copy of a page can't overwrite a fuller one that landed earlier. Held
     // together with the upsert so a concurrent source can't slip between them.
     const { data, error } = await serialize(async () => {
-      const kept = await dropWeakerThanStored(db, unique, source);
+      const kept = await dropWeakerThanStored(db, withFireWeather, source);
       if (!kept.length) return { data: null, error: null };
       return db.from("incidents").upsert(kept, { onConflict: "id" }).select("id");
     });

@@ -7,6 +7,14 @@ export interface Coords {
   lat: number;
 }
 
+/** Nearest BOM AWS station's current Fire Behaviour Index — see lib/fbi.ts. */
+export interface FireWeather {
+  primaryFbi: number;
+  secondaryFbi: number;
+  stationName: string;
+  distanceKm: number;
+}
+
 export interface Incident {
   /** Stable id — the incident number when we have one. */
   id: string;
@@ -27,6 +35,8 @@ export interface Incident {
   raw: string;
   /** When a STOP/STAND DOWN/NNTA message flagged this incident, else null. */
   stoppedAt: string | null;
+  /** Nearest station's Fire Behaviour Index, when this call qualifies. */
+  fireWeather: FireWeather | null;
 }
 
 /**

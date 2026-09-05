@@ -82,6 +82,7 @@ function parseFrincDash(line: string, receivedAt: string): Incident | null {
     fields: { TYPE: type, TURNOUT: turnout, INC: incRaw },
     raw: line,
     stoppedAt: null,
+    fireWeather: null,
   };
 }
 
@@ -133,6 +134,7 @@ function parseKeyValue(line: string, receivedAt: string): Incident {
       fields,
       raw: line,
       stoppedAt: null,
+      fireWeather: null,
     };
   }
 
@@ -162,6 +164,7 @@ function parseKeyValue(line: string, receivedAt: string): Incident {
     fields,
     raw: line,
     stoppedAt: null,
+    fireWeather: null,
   };
 }
 
@@ -217,6 +220,7 @@ function parsePositional(line: string, receivedAt: string): Incident {
     fields,
     raw: line,
     stoppedAt: null,
+    fireWeather: null,
   };
 }
 
@@ -242,6 +246,7 @@ function parseSes(line: string, receivedAt: string): Incident {
     fields: {},
     raw: line,
     stoppedAt: null,
+    fireWeather: null,
   };
 }
 

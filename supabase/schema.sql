@@ -196,6 +196,16 @@ update public.push_subscriptions
         or coalesce(array_length(lgas, 1), 0) > 0
         or coalesce(array_length(stations, 1), 0) > 0);
 
+-- ── Fire Behaviour Index ─────────────────────────────────────────────────────
+-- Nearest BOM AWS station's current primary/secondary FBI, looked up at ingest
+-- time from the incident's coordinates (see lib/fbi.ts). NULL for every
+-- incident that isn't an RFS vegetation-fire-type call with coordinates —
+-- which rules FRNSW pages out outright, since they carry no coordinates at all.
+alter table public.incidents add column if not exists primary_fbi      numeric;
+alter table public.incidents add column if not exists secondary_fbi    numeric;
+alter table public.incidents add column if not exists fbi_station      text;
+alter table public.incidents add column if not exists fbi_distance_km  numeric;
+
 -- ── Stand-down flags ─────────────────────────────────────────────────────────
 -- Set when a STOP / STAND DOWN / NNTA message arrives referencing this incident
 -- number (see lib/standdown.ts). NULL = not stood down. Stamped on every row

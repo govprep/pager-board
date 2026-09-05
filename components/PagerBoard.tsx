@@ -534,6 +534,16 @@ function IncidentModal({
               : <span className="dim">—</span>}
           </div>
 
+          {inc.fireWeather && (
+            <div className="modal-field">
+              <span className="modal-label">Fire Behaviour Index</span>
+              <span className="modal-value">
+                {inc.fireWeather.primaryFbi} primary / {inc.fireWeather.secondaryFbi} secondary
+                <span className="dim"> — {inc.fireWeather.stationName} ({inc.fireWeather.distanceKm} km)</span>
+              </span>
+            </div>
+          )}
+
           <div className="modal-field">
             <span className="modal-label">Address</span>
             <div className="addr-cell">
@@ -1133,6 +1143,7 @@ export default function PagerBoard({
               <th style={{ width: 92 }}>Incident</th>
               <th style={{ width: 66 }}>Time</th>
               <th style={{ width: 200 }}>Type</th>
+              <th style={{ width: 64 }}>FBI</th>
               <th style={{ width: "32%" }}>Call Sign</th>
               <th>Address</th>
             </tr>
@@ -1141,7 +1152,7 @@ export default function PagerBoard({
             {grouped.map(([date, rows]) => (
               <Fragment key={date}>
                 <tr className="date-row">
-                  <td colSpan={5}>{date}</td>
+                  <td colSpan={6}>{date}</td>
                 </tr>
                 {rows.map((entry) => {
                   const { key, inc: i, units } = entry;
@@ -1177,6 +1188,18 @@ export default function PagerBoard({
                         {i.type
                           ? <span className={`type-tag ${tc}`} title={i.type}>{i.type.toUpperCase()}</span>
                           : <span className="dim">—</span>}
+                      </td>
+                      <td>
+                        {i.fireWeather ? (
+                          <span
+                            className="fbi-tag"
+                            title={`${i.fireWeather.stationName} · ${i.fireWeather.distanceKm} km away`}
+                          >
+                            {i.fireWeather.primaryFbi} / {i.fireWeather.secondaryFbi}
+                          </span>
+                        ) : (
+                          <span className="dim">—</span>
+                        )}
                       </td>
                       <td>
                         <div className="cs-cell">
@@ -1231,7 +1254,7 @@ export default function PagerBoard({
             ))}
             {hasMore && !search && (
               <tr ref={sentinelRef} className="load-sentinel">
-                <td colSpan={5}>{loadingMore ? "Loading earlier incidents…" : ""}</td>
+                <td colSpan={6}>{loadingMore ? "Loading earlier incidents…" : ""}</td>
               </tr>
             )}
           </tbody>
