@@ -138,25 +138,21 @@ interface StoredFireWeather {
   fbi_observation: FireObservation;
 }
 
-/**
- * Stamp every row with the nearest station's primary/secondary FBI, or null on
- * all fields when the row doesn't qualify (wrong type, no coords, or the BOM
- * feed isn't reachable). Always sets every field so a batch's rows keep
- * uniform keys for the upsert — see feeder/poster.ts and lib/store.ts.
- *
- * Rows are grouped by incident_no, not by row id: several rows can be
- * different brigades paged to the same job, and they must all show the same
- * figure. One BOM lookup covers the whole group, and a group whose incident_no
- * already has a figure computed within THROTTLE_MS reuses it unchanged rather
- * than recomputing — pass `force: true` (scripts/backfill-fbi.ts) to skip that
- * check for a deliberate one-off recompute.
- */
-export async function attachFireWeather<T extends IncidentRow>(
-  db: SupabaseClient,
-  rows: T[],
-  opts: { force?: boolean } = {},
-): Promise<T[]> {
-  for (const row of rows) {
+function applyStored(group: IncidentRow[], prior: StoredFireWeather) {
+  for (const row of group) {
+    const r = row as IncidentRow & Record<string, unknown>;
+    r.primary_fbi = prior.primary_fbi;
+    r.secondary_fbi = prior.secondary_fbi;
+    r.fbi_station = prior.fbi_station;
+    r.fbi_distance_km = prior.fbi_distance_km;
+    r.fbi_observed_at = prior.fbi_observed_at;
+    r.fbi_computed_at = prior.fbi_computed_at;
+    r.fbi_observation = prior.fbi_observation;
+  }
+}
+
+function applyNull(group: IncidentRow[]) {
+  for (const row of group) {
     const r = row as IncidentRow & Record<string, unknown>;
     r.primary_fbi = null;
     r.secondary_fbi = null;
@@ -166,59 +162,83 @@ export async function attachFireWeather<T extends IncidentRow>(
     r.fbi_computed_at = null;
     r.fbi_observation = null;
   }
+}
 
+/**
+ * Stamp every row with the nearest station's primary/secondary FBI, or null on
+ * all fields when the row doesn't qualify at all (wrong type, or no coords —
+ * this is what excludes FRNSW pages outright). Always sets every field so a
+ * batch's rows keep uniform keys for the upsert — see feeder/poster.ts and
+ * lib/store.ts.
+ *
+ * Rows are grouped by incident_no, not by row id: several rows can be
+ * different brigades paged to the same job, and they must all show the same
+ * figure. A group whose incident_no already has a figure computed within
+ * THROTTLE_MS reuses it unchanged rather than recomputing — pass
+ * `force: true` (scripts/backfill-fbi.ts) to skip that check for a deliberate
+ * one-off recompute.
+ *
+ * Critically, a qualifying row that can't get a *fresh* figure right now (BOM
+ * unreachable, no matching station, a failed stored-lookup) falls back to
+ * whatever figure is already stored for its incident_no, however stale,
+ * rather than being nulled — a job's FBI must never flicker to blank on a
+ * re-page just because one particular ingest hit a transient hiccup. Only a
+ * genuinely ineligible row, or one that has truly never had a figure, ends up
+ * null.
+ */
+export async function attachFireWeather<T extends IncidentRow>(
+  db: SupabaseClient,
+  rows: T[],
+  opts: { force?: boolean } = {},
+): Promise<T[]> {
   const byIncident = new Map<string, T[]>();
   for (const row of rows) {
     const r = row as IncidentRow & Record<string, unknown>;
-    if (r.coords == null || !isFireWeatherType(String(r.type ?? ""))) continue;
+    if (r.coords == null || !isFireWeatherType(String(r.type ?? ""))) {
+      // Genuinely doesn't qualify — re-typed away from fire, or never had
+      // coords. This is the one case that's always null.
+      applyNull([row]);
+      continue;
+    }
     const incNo = String(r.incident_no || r.id);
     if (!byIncident.has(incNo)) byIncident.set(incNo, []);
     byIncident.get(incNo)!.push(row);
   }
   if (byIncident.size === 0) return rows;
 
-  const stations = await getStations();
-  if (stations.length === 0) return rows;
-
-  // What's already on the board for these incident numbers, so a re-page
-  // within the throttle window can reuse it instead of recomputing.
+  // What's already on the board for these incident numbers — the throttle's
+  // reuse source, and now also the fallback for a group whose fresh lookup
+  // fails outright, so always fetched regardless of `force`.
   const stored = new Map<string, StoredFireWeather>();
-  if (!opts.force) {
-    const incidentNos = [...byIncident.keys()];
-    for (let i = 0; i < incidentNos.length; i += 200) {
-      const { data, error } = await db
-        .from("incidents")
-        .select(
-          `incident_no, primary_fbi, secondary_fbi, fbi_station, fbi_distance_km,
-           fbi_observed_at, fbi_computed_at, fbi_observation`,
-        )
-        .in("incident_no", incidentNos.slice(i, i + 200))
-        .not("fbi_computed_at", "is", null);
-      if (error) {
-        console.error("[fbi] stored lookup:", error.message);
-        continue;
-      }
-      for (const row of (data ?? []) as (StoredFireWeather & { incident_no: string })[]) {
-        const held = stored.get(row.incident_no);
-        if (!held || row.fbi_computed_at > held.fbi_computed_at) stored.set(row.incident_no, row);
-      }
+  const incidentNos = [...byIncident.keys()];
+  for (let i = 0; i < incidentNos.length; i += 200) {
+    const { data, error } = await db
+      .from("incidents")
+      .select(
+        `incident_no, primary_fbi, secondary_fbi, fbi_station, fbi_distance_km,
+         fbi_observed_at, fbi_computed_at, fbi_observation`,
+      )
+      .in("incident_no", incidentNos.slice(i, i + 200))
+      .not("fbi_computed_at", "is", null);
+    if (error) {
+      console.error("[fbi] stored lookup:", error.message);
+      continue;
+    }
+    for (const row of (data ?? []) as (StoredFireWeather & { incident_no: string })[]) {
+      const held = stored.get(row.incident_no);
+      if (!held || row.fbi_computed_at > held.fbi_computed_at) stored.set(row.incident_no, row);
     }
   }
 
+  const stations = await getStations();
   const now = Date.now();
+
   for (const [incNo, group] of byIncident) {
     const prior = stored.get(incNo);
-    if (prior && now - new Date(prior.fbi_computed_at).getTime() < THROTTLE_MS) {
-      for (const row of group) {
-        const r = row as IncidentRow & Record<string, unknown>;
-        r.primary_fbi = prior.primary_fbi;
-        r.secondary_fbi = prior.secondary_fbi;
-        r.fbi_station = prior.fbi_station;
-        r.fbi_distance_km = prior.fbi_distance_km;
-        r.fbi_observed_at = prior.fbi_observed_at;
-        r.fbi_computed_at = prior.fbi_computed_at;
-        r.fbi_observation = prior.fbi_observation;
-      }
+    const withinThrottle =
+      !opts.force && prior != null && now - new Date(prior.fbi_computed_at).getTime() < THROTTLE_MS;
+    if (withinThrottle) {
+      applyStored(group, prior!);
       continue;
     }
 
@@ -233,20 +253,28 @@ export async function attachFireWeather<T extends IncidentRow>(
         best = s;
       }
     }
-    if (!best) continue;
 
-    const computedAt = new Date().toISOString();
-    const observedAt = new Date(best.observedAtEpoch * 1000).toISOString();
-    const distanceKm = Math.round(bestKm * 10) / 10;
-    for (const row of group) {
-      const r = row as IncidentRow & Record<string, unknown>;
-      r.primary_fbi = best.primaryFbi;
-      r.secondary_fbi = best.secondaryFbi;
-      r.fbi_station = best.name;
-      r.fbi_distance_km = distanceKm;
-      r.fbi_observed_at = observedAt;
-      r.fbi_computed_at = computedAt;
-      r.fbi_observation = best.observation;
+    if (best) {
+      const computedAt = new Date().toISOString();
+      const observedAt = new Date(best.observedAtEpoch * 1000).toISOString();
+      const distanceKm = Math.round(bestKm * 10) / 10;
+      for (const row of group) {
+        const r = row as IncidentRow & Record<string, unknown>;
+        r.primary_fbi = best.primaryFbi;
+        r.secondary_fbi = best.secondaryFbi;
+        r.fbi_station = best.name;
+        r.fbi_distance_km = distanceKm;
+        r.fbi_observed_at = observedAt;
+        r.fbi_computed_at = computedAt;
+        r.fbi_observation = best.observation;
+      }
+    } else if (prior) {
+      // BOM unreachable, no stations, or (shouldn't happen) no match found —
+      // keep showing the last good figure instead of erasing it.
+      applyStored(group, prior);
+    } else {
+      // Never computed before and can't compute now.
+      applyNull(group);
     }
   }
 
