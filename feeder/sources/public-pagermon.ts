@@ -24,10 +24,14 @@ export const PUBLIC_INSTANCES: LiveInstance[] = [
   //
   // Off because the feeder box can't reach it, not because we don't want it.
   // Cloudflare 403s that IP on every path and every transport — with a browser
-  // User-Agent as much as without, the body naming "bot" — so this is the zone
-  // blocking a datacenter IP, most likely Bot Fight Mode, and nothing on our
-  // side fixes it. It connects fine from a residential connection, which is why
-  // it only showed up once deployed.
+  // User-Agent as much as without — and nothing on our side fixes it. It
+  // connects fine from a residential connection, which is why it only showed up
+  // once deployed.
+  //
+  // Retested 2026-09-06: still 403 (cf-ray a369b6a98f505081-SYD). The body is
+  // the WAF block page ("Sorry, you have been blocked … forcequit.xyz"), not
+  // Bot Fight Mode's challenge, so it's a firewall rule on the zone naming the
+  // apex domain. Only the host's operator can lift it.
   //
   // To turn back on: get the server's IP allowlisted by whoever runs the host,
   // then delete the `disabled` line. Verify with

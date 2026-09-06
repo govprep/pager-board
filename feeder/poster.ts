@@ -68,11 +68,34 @@ export function makeWriter(): Writer {
   async function write(lines: PagerLine[], source: string) {
     if (!lines.length) return;
 
-    // Record the unfiltered stream FIRST — /raw shows everything that came over
-    // the air, including the lines the board deliberately throws away. Sources
-    // hand us their traffic unfiltered; the board filter runs below, after this.
-    await recordRawMessages(db, lines, source);
+    // Record the unfiltered stream — /raw shows everything that came over the
+    // air, including the lines the board deliberately throws away. Sources hand
+    // us their traffic unfiltered; the board filter runs below.
+    //
+    // Started here but NOT awaited until the board row is written. `incidents`
+    // and `pager_messages` share no keys and nothing below reads the raw feed
+    // back, so the ordering was never load-bearing — but every Supabase round
+    // trip from this host costs ~200ms, and awaiting this one first put the raw
+    // feed's write in front of the board's on every single page. Measured
+    // end-to-end, the fastest source (pager-feed) delivers in ~1.0s, of which
+    // roughly four sequential round trips are ours; this is one of them.
+    //
+    // It stays best-effort either way: the raw feed is an observability
+    // surface, so a failure here is logged, not thrown.
+    const rawWrite = recordRawMessages(db, lines, source).catch((err) =>
+      console.error(`[${source}] raw feed:`, err instanceof Error ? err.message : err),
+    );
 
+    // The board path runs alongside it; the raw write is still settled before
+    // we return, so a batch never leaves a write dangling behind it.
+    try {
+      await writeBoard(lines, source);
+    } finally {
+      await rawWrite;
+    }
+  }
+
+  async function writeBoard(lines: PagerLine[], source: string) {
     // Board filter. Until now this lived in each source; it sits here so the
     // raw feed above sees the traffic the board rejects. A line earns a look
     // from the parser only if it's structurally sound or is a stand-down.

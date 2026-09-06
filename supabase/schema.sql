@@ -13,9 +13,31 @@ create table if not exists public.incidents (
   raw           text        not null default ''
 );
 
--- Index for the default sort (newest first)
-create index if not exists incidents_received_at_idx
-  on public.incidents (received_at desc);
+-- Keyset pagination order for the board (newest first, id as the tiebreaker).
+-- Both columns, because listIncidents() in lib/store.ts orders on
+-- (received_at desc, id desc) and pages with
+-- `received_at.lt.X or (received_at.eq.X and id.lt.Y)`. On received_at alone the
+-- tie-break half of that is a filter rather than a seek.
+--
+-- Deliberately NOT named incidents_received_at_idx: `if not exists` matches on
+-- the name alone, so reusing it against a database that already has the
+-- single-column index would silently keep the narrower one. Created first, then
+-- the old one dropped, so the ordering is never unindexed in between.
+create index if not exists incidents_received_at_id_idx
+  on public.incidents (received_at desc, id desc);
+
+drop index if exists public.incidents_received_at_idx;
+
+-- Everything that looks a job up by its number rather than by row id. A board
+-- row is keyed {incidentNo}-{unit}, so the primary key can't serve these:
+--   lib/fbi.ts        .in("incident_no", …)  — on the ingest path, every batch
+--                                              carrying a fire-weather job
+--   lib/standdown.ts  .eq("incident_no", …)  — once per stand-down notice
+--   feeder/push.ts    .in("incident_no", …)  — has this job alerted before?
+-- Without it each of those sequentially scans the whole table. `pager_messages`
+-- got the equivalent index when /raw shipped; `incidents` never did.
+create index if not exists incidents_incident_no_idx
+  on public.incidents (incident_no);
 
 -- Row-level security: the board is members-only (SMS-OTP login), so reads
 -- require a verified Supabase session. Anonymous sockets — including the

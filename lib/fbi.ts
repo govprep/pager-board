@@ -23,6 +23,12 @@ const CACHE_MS = 5 * 60_000;
 // fetch, so a quiet job's first page after a lull still gets a fresh number.
 const THROTTLE_MS = 5 * 60_000;
 
+// How long to wait on BOM before giving up and serving the cached figure. This
+// call is on the ingest path (see fetchStations), so the ceiling matters more
+// than the answer — a page reaching the board late is worse than one reaching it
+// with a five-minute-old fire index.
+const BOM_TIMEOUT_MS = 8_000;
+
 /** The raw observation values the modal's Weather tab shows. */
 export interface FireObservation {
   tempC: number | null;
@@ -87,8 +93,15 @@ async function fetchStations(): Promise<Station[]> {
   if (!user || !pass) return [];
 
   const auth = Buffer.from(`${user}:${pass}`).toString("base64");
+  // Bounded, because this sits on the ingest path: once every CACHE_MS a batch
+  // pays for this call before its rows can be upserted, and a socket that hangs
+  // rather than refusing would stall that batch indefinitely with nothing to cut
+  // it off. On timeout getStations() falls back to the last good cache exactly
+  // as it does for any other failure, so a slow BOM costs one stale figure, not
+  // a stuck feeder.
   const res = await fetch(BOM_URL, {
     headers: { Authorization: `Basic ${auth}` },
+    signal: AbortSignal.timeout(BOM_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`BOM fire weather fetch failed: ${res.status}`);
 

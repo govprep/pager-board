@@ -61,7 +61,23 @@ export async function pollRfsPager(post: PostFn): Promise<void> {
   }
 
   tick();
-  setInterval(tick, 90_000);
+  setInterval(tick, pollMs());
+}
+
+// Left at 90s deliberately. This is someone else's page being scraped, and the
+// measurements don't justify leaning on it harder: over a week it was the first
+// source to reach us for 3% of jobs, and dropping it altogether would have
+// delayed only 24 of 1306 jobs (median 0s) while losing 24 outright. Its value
+// is coverage of the pages nothing else hears, not speed — and those it will
+// carry whether we ask every 45s or every 90s.
+//
+// RFSPAGER_POLL_MS is here for the case that changes, with a 30s floor so a
+// typo can't turn the scraper into a hammer.
+const DEFAULT_POLL_MS = 90_000;
+
+function pollMs(): number {
+  const raw = Number(process.env.RFSPAGER_POLL_MS);
+  return Number.isFinite(raw) && raw >= 30_000 ? raw : DEFAULT_POLL_MS;
 }
 
 const BROWSER_HEADERS = {

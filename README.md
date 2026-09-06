@@ -78,12 +78,27 @@ is thin.
 
 It is nonetheless **switched off**, because the feeder host can't reach it.
 Cloudflare returns 403 to that IP on every path and every transport, with or
-without a browser User-Agent, the body naming "bot" — the zone blocking a
-datacenter IP, most likely Bot Fight Mode. It connects normally from a
-residential connection, so this only appeared on deployment. Nothing on our side
-fixes it: the way back is to have the server's IP allowlisted by whoever runs
-the host, then delete the `disabled` line from `PUBLIC_INSTANCES`. Until then it
-logs one line at startup instead of retrying every 30 seconds forever.
+without a browser User-Agent. It connects normally from a residential
+connection, so this only appeared on deployment. Nothing on our side fixes it:
+the way back is to have the server's IP allowlisted by whoever runs the host,
+then delete the `disabled` line from `PUBLIC_INSTANCES`. Until then it logs one
+line at startup instead of retrying every 30 seconds forever.
+
+**Retested 2026-09-06 — still blocked.** `/` and
+`/socket.io/?EIO=3&transport=polling` both 403 in ~30ms, with and without
+browser headers, from `170.64.236.23`. The response is Cloudflare's
+`server: cloudflare`, `cf-ray: a369b6a98f505081-SYD`, and the body is the
+firewall block page — *"Sorry, you have been blocked / You are unable to access
+forcequit.xyz"* — not the interstitial challenge Bot Fight Mode serves. So this
+is a **WAF rule on the zone**, and it names the apex domain rather than the
+pager subdomain. That matters for who can lift it: it's a deliberate rule in
+someone's dashboard, not a toggle we can wait out, and no amount of header
+tuning on our end will pass it.
+
+What to send whoever runs the host: the IP (`170.64.236.23`), the Ray ID above,
+and that the request is a Socket.IO subscription to `pager.forcequit.xyz`.
+Cloudflare's own block page tells the visitor to email the site owner with
+exactly that Ray ID.
 
 ### What pager-feed.net is for, and what it isn't
 
@@ -157,7 +172,94 @@ have overwritten 168 good rows in a two-day sample. It also caught a bug that
 predates it — truncated decodes from rfspager and pagermon (`location: ""`,
 `"RAMSAY RD,FIFT"`) had been quietly blanking good addresses.
 
-### A job that changes after it alerts
+#### How fast a page reaches the board
+
+Measured over a week of `pager_messages` (5,908 numbered lines, 1,306 distinct
+jobs). Two different questions, and they give different answers, so both are
+here.
+
+**Who gets a job to us first**, in wall-clock — no trust in anyone's
+self-reported timestamps, just which source's copy landed earliest:
+
+| source | won the race | covers | behind the winner (p50 / p90) |
+|---|---|---|---|
+| pager-feed | **71%** | 73% | 0.0s / 0.0s |
+| pagermon | 10% | 71% | 11.2s / 26.1s |
+| pocsag | 10% | **15%** | 0.0s / 38.6s |
+| telegram | 7% | 30% | 14.3s / 104.7s |
+| rfspager | 3% | 74% | 16.5s / 60.6s |
+
+The surprise is that **pager-feed.net is the fast path** — the instance kept for
+depth rather than breadth is first for seven jobs in ten, and drops thin. Its
+copy is what puts most jobs on the board; the fuller copy that decides what the
+row finally says arrives a median 17s later from someone else. That's the
+`fullerOf()` / `dropWeakerThanStored()` machinery earning its keep on the
+critical path, not just at the edges.
+
+The other surprise is **pocsag's 15% coverage**, against 71–74% for the three
+sources either side of it. Over three days it was silent for 84% of the window
+with gaps of six hours, where pager-feed on the identical code path was quiet
+26% and never longer than 83 minutes. A Socket.IO connection that stops
+delivering looks exactly like a quiet night from the inside — the socket stays
+open, ping/pong keeps passing, no `disconnect` fires — so `reconnection: true`
+never had anything to react to. Hence the silence watchdog in
+`sources/pagermon-live.ts`: liveness is judged on messages arriving, and a feed
+that has said nothing for 20 minutes is torn down and redialled. Its log line
+also settles which of the two possible causes it is — if redialling restores
+traffic the fault was ours, and if it doesn't, pocsag's receivers really have
+gone quiet.
+
+**What our own pipeline costs.** Every Supabase round trip from the feeder host
+is ~200ms — measured against an *empty* RPC, so it's the hop to the origin, not
+query time (the Cloudflare edge in front of it answers in 0.9ms, which is why
+this doesn't show up in a ping). Ingest was four to five of those in series,
+which is most of the ~1.0s pager-feed takes to appear. `poster.ts` now starts
+the raw-feed write without waiting on it, since `incidents` and `pager_messages`
+share no keys and nothing downstream reads the raw feed back.
+
+### Where everything physically runs
+
+The largest remaining costs are geography, not code. Measured from the feeder
+host (DigitalOcean Sydney) on 2026-09-06:
+
+| hop | now | if moved |
+|---|---|---|
+| NSW user → Vercel function | **~270ms** (`iad1`, Virginia) | ~10ms (`syd1`) |
+| Vercel function → Supabase | ~230ms (Virginia → Singapore) | ~2ms (both Sydney) |
+| feeder → Supabase | **~200ms** (Sydney → Singapore) | ~15ms |
+
+Two separate misplacements, and neither is obvious from the dashboard:
+
+- **Vercel functions run in `iad1`**, its default for new projects. An
+  unauthenticated `/api/incidents` — which returns 401 from a local JWT check
+  and never touches the database — takes ~270ms from Sydney. That is the floor
+  under every board request, paid before any work happens. `vercel.json` now
+  pins `regions: ["syd1"]`; a single non-default region is available on every
+  plan including Hobby.
+- **The Supabase project is in `ap-southeast-1` (Singapore)**, not
+  `ap-southeast-2`. Confirmed by resolving `db.<ref>.supabase.co` to
+  `2406:da18::/35` and matching it against AWS's published ranges. A TCP
+  handshake to Supabase's Singapore pooler is 253ms from the feeder host,
+  against 2ms to the Sydney one. The 200ms the feeder actually sees is lower
+  than the raw 253ms because PostgREST is fronted by Cloudflare, whose Sydney
+  edge is 0.9ms away and holds a warm path to the origin — which is also why
+  none of this shows up in a ping.
+
+Supabase cannot change a project's region in place; it means a new project and a
+cutover. Nothing here uses Supabase Auth, Storage or Edge Functions, and
+`public/sw.js` caches nothing, so the moving parts are the seven tables, the
+`record_pager_messages()` function, the Realtime publication, and four
+environment variables. Device enrolment survives, because the credential is a
+row in `member_devices` rather than anything Supabase issues.
+
+Poll intervals turned out to matter far less than they look. rfspager is first
+for 3% of jobs and dropping it entirely would have delayed just 24 of 1,306
+(median 0s), so it stays at 90s rather than leaning harder on someone else's
+page; `RFSPAGER_POLL_MS` is there if that changes. PagerMon is self-hosted, so
+it went to 15s (`PAGERMON_POLL_MS`) — cheap, and it only ever matters for the
+pages no live socket hears at all.
+
+## A job that changes after it alerts
 
 Most jobs don't arrive complete. Control pages more brigades to them minutes
 later, and re-types them as the picture firms up — an AFA that turns out to be

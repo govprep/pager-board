@@ -136,5 +136,20 @@ export async function pollPagerMon(post: PostFn): Promise<void> {
   }
 
   tick();
-  setInterval(tick, 30_000);
+  setInterval(tick, pollMs());
+}
+
+// This is *your own* PagerMon, so the poll costs nobody else anything — the
+// interval is set by how stale a page may be, not by politeness. At 30s it
+// added a mean 15s to every page only it carried; 15s halves that.
+//
+// It rarely wins the race outright (it was first for about 10% of jobs in a
+// week's sample, and dropping it entirely delayed the rest by a median of 0s),
+// so this is worth little on its own — it matters for the jobs no live socket
+// hears at all. Override with PAGERMON_POLL_MS if the box minds.
+const DEFAULT_POLL_MS = 15_000;
+
+function pollMs(): number {
+  const raw = Number(process.env.PAGERMON_POLL_MS);
+  return Number.isFinite(raw) && raw >= 5_000 ? raw : DEFAULT_POLL_MS;
 }

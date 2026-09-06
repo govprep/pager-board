@@ -128,6 +128,59 @@ function browserHeaders(baseUrl: string): Record<string, string> {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Silence watchdog.
+//
+// A socket that stops delivering looks exactly like a quiet night from the
+// inside: the connection stays open, ping/pong keeps passing, and no
+// `disconnect` ever fires — so `reconnection: true` above never has anything to
+// react to. Over a three-day sample pocsag.net was silent for 84% of the window
+// with individual gaps of six hours, while pager-feed.net on this same code was
+// quiet only 26% of the time; pocsag reached us for just 15% of the jobs the
+// board saw, against pager-feed's 73%. It wasn't that pocsag had stopped
+// broadcasting — our end had stopped listening and had no way to tell.
+//
+// So liveness is judged on messages arriving rather than on the socket's
+// opinion of itself, and a feed that has said nothing for SILENCE_MS is torn
+// down and redialled.
+//
+// The threshold is set by how long we're willing to be blind, not by how quiet
+// a feed may legitimately go. Bouncing a healthy-but-idle socket costs one
+// handshake and loses nothing; missing a dead one cost six hours. 20 minutes is
+// therefore deliberately shorter than the 83-minute lull pager-feed showed on a
+// quiet night — those nights just redial a few times, which is the cheap half
+// of the trade.
+export const SILENCE_MS = 20 * 60_000;
+
+export interface SilenceWatchdog {
+  /** Mark the feed alive — called on connect and on every message. */
+  alive: (now: number) => void;
+  /** True when the feed has been silent long enough to be worth redialling. */
+  check: (now: number) => boolean;
+}
+
+/**
+ * Track when a feed last said anything, and answer whether it has gone quiet
+ * for longer than `silenceMs`.
+ *
+ * Firing re-arms the window, so a reconnect that fixes nothing is caught again
+ * a full silence later rather than on the next tick — otherwise a genuinely
+ * dead host would be redialled in a tight loop.
+ */
+export function makeSilenceWatchdog(silenceMs: number, now: number): SilenceWatchdog {
+  let lastHeard = now;
+  return {
+    alive(at: number) {
+      lastHeard = at;
+    },
+    check(at: number) {
+      if (at - lastHeard < silenceMs) return false;
+      lastHeard = at;
+      return true;
+    },
+  };
+}
+
 /** Subscribe to one PagerMon instance's live broadcast. Reconnects on its own. */
 export async function pollPagerMonLive(
   post: PostFn,
@@ -193,11 +246,30 @@ export async function pollPagerMonLive(
   socket.on("disconnect", (reason: string) => console.warn(`${tag} disconnected:`, reason));
   socket.on("connect_error", (err: Error) => console.warn(`${tag} connect error:`, err.message));
 
+  const watchdog = makeSilenceWatchdog(SILENCE_MS, Date.now());
+  socket.on("connect", () => watchdog.alive(Date.now()));
+
   socket.on("messagePost", (msg: PagerMonLiveMessage) => {
+    watchdog.alive(Date.now());
     const line = toLine(msg, inst);
     if (!line) return;
     post([line], inst.label).catch((err) =>
       console.error(tag, err instanceof Error ? err.message : err),
     );
   });
+
+  // Checked on a timer rather than driven by the socket, precisely because the
+  // socket is the thing that has stopped telling us anything. See SILENCE_MS.
+  setInterval(() => {
+    if (!watchdog.check(Date.now())) return;
+    console.warn(
+      `${tag} nothing heard for ${Math.round(SILENCE_MS / 60_000)} min — redialling`,
+    );
+    try {
+      socket.disconnect();
+      socket.connect();
+    } catch (err) {
+      console.error(`${tag} redial failed:`, err instanceof Error ? err.message : err);
+    }
+  }, 60_000);
 }
