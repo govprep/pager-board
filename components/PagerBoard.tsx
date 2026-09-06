@@ -1269,7 +1269,15 @@ export default function PagerBoard({
               <th style={{ width: 92 }}>Incident</th>
               <th style={{ width: 66 }}>Time</th>
               <th style={{ width: 200 }}>Type</th>
-              <th style={{ width: 64 }}>FBI</th>
+              {/* Wide enough for the badge it holds, which is the thing this
+                  column is. "100 / 100" is 9 monospace characters, and the
+                  badge adds its own padding and border around them — at 64 the
+                  cell had 36px of content box for ~83px of badge, so every FBI
+                  on the board hung out over the Call Sign column instead of
+                  sitting under its own heading. Its cells take the tighter
+                  8px side padding in globals.css to spend less of the width on
+                  air. */}
+              <th style={{ width: 104 }}>FBI</th>
               <th style={{ width: "32%" }}>Call Sign</th>
               <th>Address</th>
             </tr>

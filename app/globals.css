@@ -411,6 +411,12 @@ table { width: 100%; border-collapse: collapse; }
 .board-table th:nth-child(2),
 .board-table td:nth-child(2) { padding-left: 8px; }
 
+/* FBI holds one fixed-size badge and nothing else, so the default 14px each
+   side is width spent on air the badge then needs back. See the width note on
+   the <th> in PagerBoard.tsx. */
+.board-table th:nth-child(4),
+.board-table td:nth-child(4) { padding-left: 8px; padding-right: 8px; }
+
 thead th {
   position: sticky;
   top: 0;
