@@ -166,6 +166,64 @@ function twoPageIncident(): Tables {
   };
 }
 
+// A bush-fire job carrying the figure attachFireWeather stamps onto it.
+// primary/secondary are deliberately the "wrong" way round — the higher rating
+// is the *secondary* one — so a notification that simply read primary_fbi would
+// quote 7 and fail this rather than passing by luck.
+function fireIncident(): Tables {
+  const now = new Date().toISOString();
+  return {
+    incidents: [
+      {
+        id: "26-2-BLGWDN1",
+        incident_no: "26-2",
+        type: "Bush Fire",
+        unit: "BLGWDN1",
+        location: "SOMEWHERE RD,WYONG",
+        raw: "Bush Fire SOMEWHERE RD,WYONG BLGWDN1 26-2",
+        received_at: now,
+        fields: {},
+        pushed_at: null,
+        primary_fbi: 7,
+        secondary_fbi: 23,
+        fbi_station: "GOSFORD AWS",
+        fbi_distance_km: 12.4,
+        fbi_observed_at: now,
+        fbi_observation: {},
+      },
+    ],
+    push_subscriptions: [
+      { endpoint: "https://push.example/phone-a", p256dh: "p", auth: "a", alert_all: true, lgas: [], stations: [] },
+    ],
+    incident_subscriptions: [],
+  };
+}
+
+test("a fire-weather job's alert carries the highest nearby FBI", async () => {
+  const tables = fireIncident();
+  const sent = captureSends(0);
+
+  await pushPending(fakeDb(tables), ["26-2-BLGWDN1"]);
+
+  const alert = sent.find((s) => s.title.startsWith("🚨"));
+  assert.ok(alert, `expected a new-incident alert, got ${JSON.stringify(sent)}`);
+  assert.match(alert.body, /HIGHEST NEARBY FBI 23/);
+  // The address is what the body is for; the FBI rides along after it.
+  assert.match(alert.body, /^SOMEWHERE RD,WYONG · /);
+});
+
+test("a job with no fire weather says nothing about FBI", async () => {
+  const tables = twoPageIncident(); // STRUCT, no fbi columns at all
+  const sent = captureSends(0);
+
+  await pushPending(fakeDb(tables), ["26-1-CMEASCR1"]);
+
+  const alert = sent.find((s) => s.title.startsWith("🚨"));
+  assert.ok(alert);
+  assert.doesNotMatch(alert.body, /FBI/);
+  assert.equal(alert.body, "RINGWOOD RD,WONGA PARK");
+});
+
 test("two pages of one new incident, pushed concurrently, alert the phone once", async () => {
   const tables = twoPageIncident();
   const db = fakeDb(tables);

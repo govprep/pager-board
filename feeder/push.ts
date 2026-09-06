@@ -113,6 +113,45 @@ function firstLocationName(location: string): string {
   return (location.split(",")[0] ?? "").trim();
 }
 
+/**
+ * The worst Fire Behaviour Index on the job, or null if it has none.
+ *
+ * The board shows the nearest station's two ratings side by side ("23 / 7") —
+ * primary and secondary are two fuel types at the same station, not two places.
+ * A notification has no room to explain that, and the pair invites the reader to
+ * work out which half matters while they're pulling boots on, so this collapses
+ * them to the single number that decides how the job is treated: the higher one.
+ *
+ * Read across every page in the group rather than the representative alone.
+ * attachFireWeather stamps a job's rows from one lookup so they should agree,
+ * but a page upserted before the figure existed would otherwise decide the whole
+ * notification just by being first.
+ */
+function highestFbi(incs: Incident[]): number | null {
+  let highest: number | null = null;
+  for (const inc of incs) {
+    const fw = inc.fireWeather;
+    if (!fw) continue;
+    for (const v of [fw.primaryFbi, fw.secondaryFbi]) {
+      if (typeof v === "number" && Number.isFinite(v) && (highest == null || v > highest)) {
+        highest = v;
+      }
+    }
+  }
+  return highest;
+}
+
+// Appended to the body rather than the title: the title is the one line a locked
+// phone always shows in full, and the type (plus station, on FRNSW) already
+// fills it. Only fire-weather jobs carry one at all, so this is silent on the
+// AFA/MVA/structure traffic that is most of the board.
+function withFbi(body: string, incs: Incident[]): string {
+  const fbi = highestFbi(incs);
+  if (fbi == null) return body;
+  const note = `HIGHEST NEARBY FBI ${fbi}`;
+  return body ? `${body} · ${note}` : note;
+}
+
 // Deep link to a specific incident card. The board reads ?incident= on load (or
 // via a service-worker message when already open) and pops that card open.
 function boardUrl(incidentNo: string): string {
@@ -348,7 +387,7 @@ async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
       const where = firstLocationName(inc.location) || inc.location || "this incident";
       const payload = JSON.stringify({
         title: `🚒 ${name || "INCIDENT"}`,
-        body: `${units.join(", ")} ${verb} ${where}`,
+        body: withFbi(`${units.join(", ")} ${verb} ${where}`, g.incs),
         url: boardUrl(g.incidentNo),
         tag: g.incidentNo,
       });
@@ -372,7 +411,7 @@ async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
         isFrnsw(inc) && inc.unit
           ? `🚨 ${name || "INCIDENT"} · ${inc.unit}`
           : `🚨 ${name || "INCIDENT"}`;
-      const body = inc.location || (isFrnsw(inc) ? "" : inc.unit) || "";
+      const body = withFbi(inc.location || (isFrnsw(inc) ? "" : inc.unit) || "", g.incs);
       const payload = JSON.stringify({
         title,
         body,
