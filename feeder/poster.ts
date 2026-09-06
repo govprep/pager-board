@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServerClient } from "../lib/supabase-server";
-import { parsePagerMessage, hasIncidentNumber } from "../lib/parser";
+import { parsePagerMessage, hasIncidentNumber, pageTime } from "../lib/parser";
 import { parseStandDown, applyStandDowns, type StandDown } from "../lib/standdown";
 import { passesBoardFilter } from "../lib/filter";
 import { recordRawMessages } from "../lib/raw-feed";
@@ -120,12 +120,13 @@ export function makeWriter(): Writer {
     lines = normalLines;
     if (!lines.length) return;
 
-    // Track whether each line carried an explicit time. parsePagerMessage fills
-    // a now() default when it didn't, so we can't tell from received_at alone.
+    // Track whether each line carried an explicit time — from the source, or
+    // from a logging prefix on the line itself. parsePagerMessage fills a now()
+    // default when it had neither, so we can't tell from received_at alone.
     const parsed = lines
       .map(({ raw, receivedAt }) => {
         const inc = parsePagerMessage(raw, receivedAt);
-        return inc ? { inc, hasTime: receivedAt != null } : null;
+        return inc ? { inc, hasTime: receivedAt != null || pageTime(raw) != null } : null;
       })
       // Only numbered incidents (RFS + FRNSW) are stored/mirrored — SES and
       // number-less pages are dropped at ingestion.

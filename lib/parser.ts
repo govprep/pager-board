@@ -24,6 +24,45 @@ const BARE_COORDS_RE = /^-?\d+\.\d+,-?\d+\.\d+$/;
 // An uppercase token immediately followed by a colon = a key.
 const KEY_RE = /\b([A-Z][A-Z0-9]+)\s*:\s*/g;
 
+// Some feeds put the time they logged the page in front of it:
+//
+//   06 September 2026 17:12:11 CVDO - 26-125953 - Grass - FIRECALL - JACKYS…
+//
+// It isn't part of the page. Left on, the positional reader takes "06" for the
+// alert level and "September" for the station, so the job lands on the board as
+// a resource called September, under an id no other source's copy of the same
+// page shares. rfspager.ts strips this prefix at the source; reading it here
+// means any feed that carries one is handled, not just that one.
+//
+// Anchored tightly — day, month word, four-digit year, h:mm:ss — so a real
+// positional header ("2 STSUTTO - …") can't match it.
+const DATE_PREFIX_RE = /^(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})\s+/;
+
+/**
+ * The page with its logging prefix removed, and the time that prefix states.
+ *
+ * The two are decided separately, because the decode corrupts the month word
+ * often enough to matter ("05 Setember 2026 17:32:22 THWISFE1 - …" is a real
+ * board row). Nothing but a prefix is shaped like this, so it comes off the
+ * line either way; the time is only taken when it actually reads as a date.
+ */
+function stripDatePrefix(line: string): { body: string; at: string | null } {
+  const m = line.match(DATE_PREFIX_RE);
+  if (!m) return { body: line, at: null };
+  // "September 06 2026 17:12:11" — read as local time, the same way
+  // feeder/sources/rfspager.ts reads this prefix.
+  const d = new Date(`${m[2]} ${m[1]} ${m[3]} ${m[4]}`);
+  return {
+    body: line.slice(m[0].length).trim(),
+    at: isNaN(d.getTime()) ? null : d.toISOString(),
+  };
+}
+
+/** The time a page states in its own logging prefix, if it carries one. */
+export function pageTime(raw: string): string | null {
+  return stripDatePrefix((raw ?? "").trim()).at;
+}
+
 function parseCoords(line: string): Coords | null {
   const m = line.match(COORDS_RE);
   if (m) {
@@ -265,17 +304,24 @@ export function hasIncidentNumber(inc: Incident): boolean {
 /** Parse one raw pager line. Returns null only for empty input. */
 export function parsePagerMessage(
   raw: string,
-  receivedAt: string = new Date().toISOString(),
+  receivedAt?: string,
 ): Incident | null {
-  const line = (raw ?? "").trim();
-  if (!line) return null;
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return null;
+  // Off before any reader below sees the line, and off `raw` with them, so a
+  // feed that logs a prefix and one that doesn't store the same page the same
+  // way — which is what puts both copies on one row.
+  const { body: line, at } = stripDatePrefix(trimmed);
+  // The source's own timestamp is the better one — it knows when it heard the
+  // page. The line's is next, and only then now().
+  const stamp = receivedAt ?? at ?? new Date().toISOString();
   // Before the generic key/value reader — "FRINC:" would satisfy it, and it
   // would find no TYPE or TURNOUT key to read.
-  const frinc = parseFrincDash(line, receivedAt);
+  const frinc = parseFrincDash(line, stamp);
   if (frinc) return frinc;
-  if (/\b[A-Z][A-Z0-9]+\s*:/.test(line)) return parseKeyValue(line, receivedAt);
-  if (isSesLine(line)) return parseSes(line, receivedAt);
-  return parsePositional(line, receivedAt);
+  if (/\b[A-Z][A-Z0-9]+\s*:/.test(line)) return parseKeyValue(line, stamp);
+  if (isSesLine(line)) return parseSes(line, stamp);
+  return parsePositional(line, stamp);
 }
 
 /** Parse many lines (a pasted dump or a batch from the feed). */
