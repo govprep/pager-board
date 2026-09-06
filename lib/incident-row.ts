@@ -34,6 +34,10 @@ export function toIncident(row: any): Incident {
             windDir: row.fbi_observation?.windDir ?? null,
             windSpdKmh: row.fbi_observation?.windSpdKmh ?? null,
             windGustKmh: row.fbi_observation?.windGustKmh ?? null,
+            primaryFuelModel: row.fbi_observation?.primaryFuelModel ?? null,
+            primaryFuelName: row.fbi_observation?.primaryFuelName ?? null,
+            secondaryFuelModel: row.fbi_observation?.secondaryFuelModel ?? null,
+            secondaryFuelName: row.fbi_observation?.secondaryFuelName ?? null,
           }
         : null,
   };

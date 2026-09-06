@@ -20,6 +20,15 @@ export interface FireWeather {
   windDir: string | null;
   windSpdKmh: number | null;
   windGustKmh: number | null;
+  /**
+   * Which fuel each of the two ratings describes — they're two fuels at one
+   * station, not two stations, and the pair varies by location. Null on rows
+   * stamped before these were captured. See lib/fbi.ts.
+   */
+  primaryFuelModel: string | null;
+  primaryFuelName: string | null;
+  secondaryFuelModel: string | null;
+  secondaryFuelName: string | null;
 }
 
 export interface Incident {

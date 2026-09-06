@@ -30,6 +30,25 @@ export interface FireObservation {
   windDir: string | null;
   windSpdKmh: number | null;
   windGustKmh: number | null;
+  /**
+   * What the two ratings are ratings *of*.
+   *
+   * Primary and secondary are not two places — they're two fuels at the same
+   * station, and which two depends entirely on where the station is: Cessnock
+   * reads Forest against Shrubland, Wilcannia reads Grassland against Spinifex.
+   * Without these the modal shows "23 / 7" and leaves the reader to guess which
+   * half applies to the country the job is actually in.
+   *
+   * `Model` is BOM's fire behaviour model ("Forest", "Grassland") and `Name` the
+   * vegetation it stands for ("Swamp forests"). They come off `station_info`
+   * rather than the observation, but ride in this blob because `fbi_observation`
+   * is jsonb and the schema is applied by hand — see supabase/schema.sql. Older
+   * rows simply have no such keys, and read as null.
+   */
+  primaryFuelModel: string | null;
+  primaryFuelName: string | null;
+  secondaryFuelModel: string | null;
+  secondaryFuelName: string | null;
 }
 
 interface Station {
@@ -44,6 +63,23 @@ interface Station {
 }
 
 let cache: { at: number; stations: Station[] } | null = null;
+
+// When BOM was last asked, successful or not. The failure paths deliberately
+// leave `cache` alone (see getStations), so this is what stops a broken feed
+// from being re-fetched on every single batch.
+let lastAttempt = 0;
+
+// Said once per process rather than per lookup.
+let warnedUnconfigured = false;
+
+function bomConfigured(): boolean {
+  return !!process.env.BOM_USER && !!process.env.BOM_PASS;
+}
+
+/** A BOM string field, or null when it's absent, blank or not a string. */
+function text(v: unknown): string | null {
+  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+}
 
 async function fetchStations(): Promise<Station[]> {
   const user = process.env.BOM_USER;
@@ -78,6 +114,11 @@ async function fetchStations(): Promise<Station[]> {
         windDir: typeof obs.wind_dir === "string" ? obs.wind_dir : null,
         windSpdKmh: typeof obs.wnd_spd_kmh === "number" ? obs.wnd_spd_kmh : null,
         windGustKmh: typeof obs.wnd_gust_spd_kmh === "number" ? obs.wnd_gust_spd_kmh : null,
+        // Which fuel each rating describes — off station_info, not the reading.
+        primaryFuelModel: text(info.primary_fbm),
+        primaryFuelName: text(info.primary_fine_fuel_name),
+        secondaryFuelModel: text(info.secondary_fbm),
+        secondaryFuelName: text(info.secondary_fine_fuel_name),
       },
     });
   }
@@ -85,13 +126,46 @@ async function fetchStations(): Promise<Station[]> {
 }
 
 // Best-effort: a fetch failure serves the last good cache (if any) rather than
-// blocking ingestion, and an empty result quietly leaves rows without an FBI.
+// blocking ingestion, and an empty result leaves rows on whatever figure they
+// already had (see attachFireWeather's fallback).
+//
+// Nothing here is allowed to fail *silently*. Missing credentials used to
+// return an empty list from fetchStations without a word — no throw, no log —
+// and the empty result was then stored as though it were a good fetch. The
+// whole feature became a no-op that looked exactly like "no fires today": every
+// qualifying job got a null FBI and the log said nothing at all. So the two
+// empty cases each say so, and neither is written to `cache`, which keeps the
+// last good list serving and lets the very next cycle recover.
 async function getStations(): Promise<Station[]> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.stations;
+
+  if (!bomConfigured()) {
+    if (!warnedUnconfigured) {
+      warnedUnconfigured = true;
+      console.warn(
+        "[fbi] BOM_USER/BOM_PASS not set — no incident will get an FBI. " +
+          "Add them to .env.local (see .env.example) and restart the feeder.",
+      );
+    }
+    return [];
+  }
+
+  // Rate-limit the *attempt*, not just the success, so a feed that is erroring
+  // or answering in a shape we don't recognise isn't hit on every batch.
+  if (Date.now() - lastAttempt < CACHE_MS) return cache?.stations ?? [];
+  lastAttempt = Date.now();
+
   try {
     const stations = await fetchStations();
-    cache = { at: Date.now(), stations };
-    return stations;
+    if (stations.length) {
+      cache = { at: Date.now(), stations };
+      return stations;
+    }
+    console.warn(
+      "[fbi] BOM returned no usable stations — credentials may be rejected, " +
+        "or the feed's fields have changed shape (see fetchStations)",
+    );
+    return cache?.stations ?? [];
   } catch (err) {
     console.error("[fbi]", (err as Error).message);
     return cache?.stations ?? [];
