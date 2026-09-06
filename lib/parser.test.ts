@@ -79,3 +79,37 @@ test("an unreadable prefix time falls back rather than inventing one", () => {
   );
   assert.equal(inc?.receivedAt, "2026-09-05T07:32:46.000Z");
 });
+
+// Real board rows: the decode corrupted the prefix's own numbers, so the strict
+// shape above (a clean hh:mm:ss) doesn't match — but the day-month-year opening
+// is still unmistakable, and the page behind it is intact.
+test("a prefix whose time ran into the year is still not the resource", () => {
+  const inc = parsePagerMessage(
+    "03 August 202641;:33:55 CMNAREL1 - 26-122680 - Structure/building/house fire - STRUCTURE FIRE - 85 BAMBURGH RD,WEROMBI,WOLLONDILLY (NSW),2570 - [150.59354,-33.9879]",
+    "2026-08-02T23:34:31.000Z",
+  );
+  assert.equal(inc?.unit, "CMNAREL1");
+  assert.equal(inc?.type, "Structure/building/house fire");
+  assert.equal(inc?.location, "85 BAMBURGH RD,WEROMBI,WOLLONDILLY (NSW),2570");
+  assert.deepEqual(inc?.coords, { lng: 150.59354, lat: -33.9879 });
+});
+
+// The dangerous neighbour of the rule above: a positional header is "{level}
+// {station}", and a station's name can begin with a month ("2 MAYFIELD"). Only
+// a year after the word makes it a date, so that is what the rule requires.
+test("a station whose name starts with a month is left alone", () => {
+  const inc = parsePagerMessage(
+    "2 MAYFIELD - 26-123456 - Chimney fire - FIRECALL - 10 NORTH ST,SUTTON,YASS VALLEY (NSW),2620",
+    "2026-09-06T07:12:11.000Z",
+  );
+  assert.equal(inc?.unit, "MAYFIELD");
+  assert.equal(inc?.incidentNo, "26-123456");
+});
+
+test("a mangled prefix carries no time, so the source's stands", () => {
+  const inc = parsePagerMessage(
+    "03 August 202641;:33:55 CMNAREL1 - 26-122680 - Structure/building/house fire - STRUCTURE FIRE - 85 BAMBURGH RD,WEROMBI",
+    "2026-08-02T23:34:31.000Z",
+  );
+  assert.equal(inc?.receivedAt, "2026-08-02T23:34:31.000Z");
+});

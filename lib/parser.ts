@@ -38,17 +38,40 @@ const KEY_RE = /\b([A-Z][A-Z0-9]+)\s*:\s*/g;
 // positional header ("2 STSUTTO - …") can't match it.
 const DATE_PREFIX_RE = /^(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})\s+/;
 
+// …and the same prefix after the decode has chewed its numbers, which the rule
+// above can't match because there is no readable time left in it:
+//
+//   03 August 202641;:33:55 CMNAREL1 - 26-122680 - Structure/building/house fire…
+//
+// The page behind it is whole, so it's worth reading — the prefix just can't be
+// identified by its shape any more. It's identified by its opening instead:
+// a day, a real month name, and a year.
+//
+// The year is what makes this safe rather than reckless. A positional header is
+// "{level} {station}", and a station name can begin with a month — "2 MAYFIELD"
+// would be eaten by a day-and-month rule, taking the page with it. Nothing but
+// a date puts four digits after the month.
+const MANGLED_PREFIX_RE =
+  /^\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4}\S*\s+/i;
+
 /**
  * The page with its logging prefix removed, and the time that prefix states.
  *
- * The two are decided separately, because the decode corrupts the month word
- * often enough to matter ("05 Setember 2026 17:32:22 THWISFE1 - …" is a real
- * board row). Nothing but a prefix is shaped like this, so it comes off the
- * line either way; the time is only taken when it actually reads as a date.
+ * The two are decided separately, because the decode corrupts the prefix often
+ * enough to matter — "05 Setember 2026 17:32:22 THWISFE1 - …" and
+ * "03 August 202641;:33:55 CMNAREL1 - …" are both real board rows. Nothing but
+ * a prefix opens like this, so it comes off the line either way; the time is
+ * only taken when it actually reads as a date, and a page whose prefix is too
+ * broken to date is still a page.
  */
 function stripDatePrefix(line: string): { body: string; at: string | null } {
   const m = line.match(DATE_PREFIX_RE);
-  if (!m) return { body: line, at: null };
+  if (!m) {
+    const mangled = line.match(MANGLED_PREFIX_RE);
+    return mangled
+      ? { body: line.slice(mangled[0].length).trim(), at: null }
+      : { body: line, at: null };
+  }
   // "September 06 2026 17:12:11" — read as local time, the same way
   // feeder/sources/rfspager.ts reads this prefix.
   const d = new Date(`${m[2]} ${m[1]} ${m[3]} ${m[4]}`);
