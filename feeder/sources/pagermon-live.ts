@@ -52,6 +52,19 @@ export interface LiveInstance {
    * forever and buries the log.
    */
   disabled?: string;
+  /**
+   * Dial this instance — and only this instance — through a SOCKS5 proxy, e.g.
+   * "socks5://127.0.0.1:1080". Set per instance from the environment; see
+   * `withProxy` in sources/public-pagermon.ts.
+   *
+   * For a host that refuses this machine's IP rather than the request itself:
+   * pager.forcequit.xyz is 403'd by a Cloudflare WAF rule on the zone, which no
+   * amount of header tuning gets past, while the identical request from a
+   * residential connection is waved through. A proxy parked on such a
+   * connection is the difference, so it's scoped to the one instance that needs
+   * it — every other source keeps its direct path.
+   */
+  proxy?: string;
 }
 
 // Instances disagree on how to spell an agency: pocsag.net says "FRNSW" and
@@ -125,6 +138,75 @@ function browserHeaders(baseUrl: string): Record<string, string> {
     "Accept-Language": "en-AU,en;q=0.9",
     Origin: baseUrl,
     Referer: `${baseUrl}/`,
+  };
+}
+
+/**
+ * Build the agent that routes one instance's traffic through `proxy`.
+ *
+ * SOCKS only, and loudly so. The tunnel this exists for is OpenSSH's reverse
+ * dynamic forward (`ssh -N -R 1080`), which speaks SOCKS5 — and handing
+ * socks-proxy-agent an http:// URL doesn't fail, it just quietly connects
+ * direct, which for a host that blocks this IP means 403ing forever while the
+ * log claims a proxy is in use. Better to refuse the URL by name.
+ *
+ * Imported lazily so the four instances that don't use a proxy never load it.
+ */
+export async function proxyAgentFor(proxy: string): Promise<unknown> {
+  if (!/^socks(4a?|5h?)?:\/\//i.test(proxy)) {
+    throw new Error(
+      `proxy must be a socks:// URL — got "${proxy}". ` +
+        `An http:// proxy would be ignored rather than honoured.`,
+    );
+  }
+  const { SocksProxyAgent } = await import("socks-proxy-agent");
+  return new SocksProxyAgent(proxy);
+}
+
+/**
+ * The options one instance's Socket.IO connection is opened with.
+ *
+ * Split out from the call below so the proxy wiring is testable without a
+ * network: an `agent` given here reaches both transports, because engine.io
+ * builds each one with `agent: options.agent || this.agent`
+ * (engine.io-client/lib/socket.js:178) — the XHR handshake at
+ * transports/polling-xhr.js:78 and the ws upgrade at
+ * transports/websocket.js:99. It has to arrive as the same object, not a copy.
+ *
+ * With no agent the key is absent entirely rather than set to undefined, so an
+ * unproxied instance is opened with exactly what it was before this existed.
+ */
+export function liveSocketOptions(
+  inst: LiveInstance,
+  agent?: unknown,
+): Record<string, unknown> {
+  // Open on HTTP long-polling and let Socket.IO upgrade to a WebSocket once
+  // it's connected — the library's own default, and the order matters.
+  //
+  // Pinning this to ["websocket"] (as the original pocsag-only version did)
+  // means a blocked upgrade has nothing to fall back to: every host in front of
+  // these instances is Cloudflare, and a network that won't pass a WSS upgrade
+  // gets `connect error: websocket error` forever instead of a working polling
+  // connection. Long-polling is a little chattier and no less live.
+  const headers = browserHeaders(inst.baseUrl);
+
+  return {
+    transports: ["polling", "websocket"],
+    reconnection: true,
+    reconnectionDelay: 5000,
+    reconnectionDelayMax: 30_000,
+    // Socket.IO sends no User-Agent of its own, and every one of these hosts is
+    // behind Cloudflare, which will refuse a UA-less request from a datacenter
+    // IP while waving the same request through from a residential one — so this
+    // fails only once deployed. rfspager.ts carries the same headers for the
+    // same reason. Applied to both transports: the handshake is XHR, the
+    // upgrade is a WS request, and Cloudflare inspects each.
+    extraHeaders: headers,
+    transportOptions: {
+      polling: { extraHeaders: headers },
+      websocket: { extraHeaders: headers },
+    },
+    ...(agent ? { agent } : {}),
   };
 }
 
@@ -202,33 +284,25 @@ export async function pollPagerMonLive(
     return;
   }
 
-  // Open on HTTP long-polling and let Socket.IO upgrade to a WebSocket once
-  // it's connected — the library's own default, and the order matters.
-  //
-  // Pinning this to ["websocket"] (as the original pocsag-only version did)
-  // means a blocked upgrade has nothing to fall back to: every host in front of
-  // these instances is Cloudflare, and a network that won't pass a WSS upgrade
-  // gets `connect error: websocket error` forever instead of a working polling
-  // connection. Long-polling is a little chattier and no less live.
-  const headers = browserHeaders(inst.baseUrl);
+  // A proxied instance is one that can't be reached directly at all, so a proxy
+  // we can't build is a reason not to connect rather than something to shrug
+  // off: dialling direct would just 403 on a five-second loop, which is the
+  // exact noise `disabled` exists to prevent.
+  let agent: unknown;
+  if (inst.proxy) {
+    try {
+      agent = await proxyAgentFor(inst.proxy);
+    } catch (err) {
+      console.error(
+        `${tag} not connecting — unusable proxy:`,
+        err instanceof Error ? err.message : err,
+      );
+      return;
+    }
+    console.log(`${tag} routing via ${inst.proxy}`);
+  }
 
-  const socket = io(inst.baseUrl, {
-    transports: ["polling", "websocket"],
-    reconnection: true,
-    reconnectionDelay: 5000,
-    reconnectionDelayMax: 30_000,
-    // Socket.IO sends no User-Agent of its own, and every one of these hosts is
-    // behind Cloudflare, which will refuse a UA-less request from a datacenter
-    // IP while waving the same request through from a residential one — so this
-    // fails only once deployed. rfspager.ts carries the same headers for the
-    // same reason. Applied to both transports: the handshake is XHR, the
-    // upgrade is a WS request, and Cloudflare inspects each.
-    extraHeaders: headers,
-    transportOptions: {
-      polling: { extraHeaders: headers },
-      websocket: { extraHeaders: headers },
-    },
-  });
+  const socket = io(inst.baseUrl, liveSocketOptions(inst, agent));
 
   socket.on("connect", () =>
     console.log(

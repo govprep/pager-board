@@ -10,6 +10,11 @@
  *   (always)      → the public PagerMon instances in sources/public-pagermon.ts
  *                   (pocsag.net, pager.forcequit.xyz, pager-feed.net) over
  *                   Socket.IO — each silently skips if unreachable
+ *   FEEDER_PROXY_<LABEL>
+ *                 → routes that one public instance through a SOCKS5 proxy.
+ *                   FEEDER_PROXY_FORCEQUIT is what switches pager.forcequit.xyz
+ *                   back on: Cloudflare 403s this host's IP, so its socket goes
+ *                   out through a residential connection instead.
  *   TG_SESSION    → Telegram group (also needs TG_API_ID, TG_API_HASH, TG_GROUP)
  */
 

@@ -22,26 +22,28 @@ export const PUBLIC_INSTANCES: LiveInstance[] = [
   // our other sources are thin on. Worth having: 33 of the 57 incident numbers
   // it carried in a two-day sample were ones no other source had.
   //
-  // Off because the feeder box can't reach it, not because we don't want it.
-  // Cloudflare 403s that IP on every path and every transport — with a browser
-  // User-Agent as much as without — and nothing on our side fixes it. It
-  // connects fine from a residential connection, which is why it only showed up
-  // once deployed.
+  // Unreachable from the feeder box directly, not unwanted. Cloudflare 403s
+  // that IP on every path and every transport — with a browser User-Agent as
+  // much as without — and nothing on our side fixes it. It connects fine from a
+  // residential connection, which is why it only showed up once deployed.
   //
   // Retested 2026-09-06: still 403 (cf-ray a369b6a98f505081-SYD). The body is
   // the WAF block page ("Sorry, you have been blocked … forcequit.xyz"), not
   // Bot Fight Mode's challenge, so it's a firewall rule on the zone naming the
-  // apex domain. Only the host's operator can lift it.
+  // apex domain. Only the host's operator can lift it — worth asking, with the
+  // IP and that Ray ID, since it's the one fix that needs nothing running.
   //
-  // To turn back on: get the server's IP allowlisted by whoever runs the host,
-  // then delete the `disabled` line. Verify with
-  //   curl -o /dev/null -w '%{http_code}\n' \
+  // Until then it goes out through a residential connection instead: set
+  // FEEDER_PROXY_FORCEQUIT to a SOCKS5 proxy on one (see withProxy below and
+  // the README) and this entry switches itself on. Verify the route first —
+  //   curl -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:1080 \
   //     'https://pager.forcequit.xyz/socket.io/?EIO=3&transport=polling'
-  // which needs to be 200 from the box, not 403.
+  // needs to be 200 where the same call without --socks5-hostname is 403.
   {
     label: "forcequit",
     baseUrl: "https://pager.forcequit.xyz",
-    disabled: "Cloudflare 403s the feeder's IP — needs allowlisting by the host",
+    disabled:
+      "Cloudflare 403s this host's IP — set FEEDER_PROXY_FORCEQUIT to a SOCKS5 proxy on an unblocked connection",
   },
 
   // pager-feed.net publishes a *cleaned-up* rendering rather than the decode:
@@ -72,7 +74,31 @@ export const PUBLIC_INSTANCES: LiveInstance[] = [
   { label: "pager-feed", baseUrl: "https://pager-feed.net" },
 ];
 
+/**
+ * Apply `FEEDER_PROXY_<LABEL>` to an instance, if it's set.
+ *
+ * The label is upper-cased with anything a shell won't accept in a variable
+ * name folded to `_`, so pager-feed reads FEEDER_PROXY_PAGER_FEED. Any instance
+ * can be routed this way; only forcequit needs it today.
+ *
+ * Supplying a route also clears `disabled`, which is the point rather than a
+ * side effect: `disabled` means "we can't reach this host", and a proxy is us
+ * reaching it. It would be the wrong lever for an instance switched off because
+ * we distrust its data — that judgement belongs to `rawOnly` and `barFromBoard`,
+ * which this doesn't touch.
+ *
+ * Read here, at call time, rather than where the table is declared: index.ts
+ * loads .env.local in its module body, and ES imports are evaluated before that
+ * runs, so a module-scope process.env read would always come up empty.
+ */
+export function withProxy(inst: LiveInstance): LiveInstance {
+  const key = `FEEDER_PROXY_${inst.label.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+  const proxy = process.env[key]?.trim();
+  if (!proxy) return inst;
+  return { ...inst, proxy, disabled: undefined };
+}
+
 /** Subscribe to every public instance. Each reconnects independently. */
 export function pollPublicPagerMons(post: PostFn): void {
-  for (const inst of PUBLIC_INSTANCES) void pollPagerMonLive(post, inst);
+  for (const inst of PUBLIC_INSTANCES) void pollPagerMonLive(post, withProxy(inst));
 }

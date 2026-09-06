@@ -60,7 +60,7 @@ saw it.
 | your PagerMon (`PAGERMON_URL`) | REST, authenticated, `id` cursor | yes |
 | rfspager.app | HTML scrape, 90s | yes |
 | pocsag.net | PagerMon Socket.IO, live | yes |
-| pager.forcequit.xyz | PagerMon Socket.IO, live | yes — **currently blocked**, see below |
+| pager.forcequit.xyz | PagerMon Socket.IO, live, through a SOCKS proxy | only with `FEEDER_PROXY_FORCEQUIT` set — see below |
 | pager-feed.net | PagerMon Socket.IO, live | yes |
 | Telegram group (`TG_SESSION`) | MTProto, live | yes |
 
@@ -76,13 +76,9 @@ of the 57 incident numbers it carried inside the board's window were ones no
 other source had — mostly Illawarra and Shoalhaven, where the rest of the feed
 is thin.
 
-It is nonetheless **switched off**, because the feeder host can't reach it.
-Cloudflare returns 403 to that IP on every path and every transport, with or
-without a browser User-Agent. It connects normally from a residential
-connection, so this only appeared on deployment. Nothing on our side fixes it:
-the way back is to have the server's IP allowlisted by whoever runs the host,
-then delete the `disabled` line from `PUBLIC_INSTANCES`. Until then it logs one
-line at startup instead of retrying every 30 seconds forever.
+The feeder host cannot reach it directly. Cloudflare returns 403 to that IP on
+every path and every transport, with or without a browser User-Agent, so this
+only appeared on deployment.
 
 **Retested 2026-09-06 — still blocked.** `/` and
 `/socket.io/?EIO=3&transport=polling` both 403 in ~30ms, with and without
@@ -95,10 +91,70 @@ pager subdomain. That matters for who can lift it: it's a deliberate rule in
 someone's dashboard, not a toggle we can wait out, and no amount of header
 tuning on our end will pass it.
 
-What to send whoever runs the host: the IP (`170.64.236.23`), the Ray ID above,
-and that the request is a Socket.IO subscription to `pager.forcequit.xyz`.
-Cloudflare's own block page tells the visitor to email the site owner with
-exactly that Ray ID.
+The tidy fix is still to ask. What to send whoever runs the host: the IP
+(`170.64.236.23`), the Ray ID above, and that the request is a Socket.IO
+subscription to `pager.forcequit.xyz`. Cloudflare's own block page tells the
+visitor to email the site owner with exactly that Ray ID. It's the only fix that
+leaves nothing running.
+
+#### Routing it through a connection that isn't blocked
+
+The same request from a residential connection is waved through, so that one
+socket — and only that one — can go out through a SOCKS5 proxy parked on such a
+connection. Set `FEEDER_PROXY_FORCEQUIT` and the instance switches itself on;
+leave it unset and it stays off with a startup line saying so, exactly as
+before. The variable is named after the instance's label
+(`FEEDER_PROXY_<LABEL>`, non-alphanumerics folded to `_`), so any instance can
+be routed the same way if another host ever blocks us. The other five sources
+keep their direct path either way.
+
+The proxy end is one command on a machine at home, and nothing installed:
+
+```bash
+ssh -N -R 1080 root@170.64.236.23 \
+  -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+```
+
+`-R` with a port and no destination is OpenSSH's **reverse** dynamic forward
+(7.6+, and the Windows 10/11 built-in client has it): the home machine dials
+*out*, and the feeder host gets a SOCKS5 proxy on `127.0.0.1:1080` whose traffic
+leaves from the home connection. That direction is what makes it practical on a
+residential line — no inbound port, no port forward, no dynamic DNS, and it
+survives the IP changing. It binds to loopback only, so nothing is exposed on
+the droplet's public interface. Give the tunnel its own restricted account
+rather than root if you'd rather; it needs to log in and nothing else.
+
+Then on the feeder host, in `.env.local`:
+
+```
+FEEDER_PROXY_FORCEQUIT=socks5://127.0.0.1:1080
+```
+
+Verify before restarting the feeder — the point is that these two disagree:
+
+```bash
+curl -o /dev/null -w '%{http_code}\n' \
+  'https://pager.forcequit.xyz/socket.io/?EIO=3&transport=polling'            # 403
+curl -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:1080 \
+  'https://pager.forcequit.xyz/socket.io/?EIO=3&transport=polling'            # 200
+```
+
+On startup the feeder logs `[forcequit] routing via socks5://127.0.0.1:1080`
+and then `[forcequit] connected via Socket.IO (polling)`.
+
+Keep the tunnel supervised — a Task Scheduler job at logon on Windows (set it to
+restart on failure), or a systemd unit with `Restart=always` on a Linux box.
+When it drops, that one instance logs connect errors and retries on its usual
+5–30s backoff while everything else carries on; when it comes back the socket
+reconnects on its own. A tunnel that *stalls* rather than drops is covered by
+the same silence watchdog as every other instance (see below): 20 minutes of
+nothing heard and the socket is torn down and redialled.
+
+An unusable `FEEDER_PROXY_*` value is refused rather than ignored — the feeder
+logs `not connecting — unusable proxy` and leaves that instance down. Connecting
+direct instead would mean 403ing in a loop while the log claimed a proxy was in
+use, and `socks-proxy-agent` silently ignores an `http://` URL, so only
+`socks…://` is accepted.
 
 ### What pager-feed.net is for, and what it isn't
 
