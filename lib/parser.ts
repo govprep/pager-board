@@ -197,9 +197,17 @@ function parsePositional(line: string, receivedAt: string): Incident {
   const location = parts.slice(addrStart, addrEnd).join(" - ");
 
   // Header is "{level} {station}" — keep the station as the unit.
+  // The station token must actually look like a station code (uppercase
+  // alnum) — some sources (forcequit) prefix a full duplicated date/time
+  // instead of a bare clock time, e.g. "06 September 2026 19:09:38 06
+  // September 2026 19:09:38 COMULLA", and a bare \S+ capture would grab
+  // "September" as the "station" since it follows the leading day-of-month
+  // digits. Requiring the token be all-caps rejects that and falls through
+  // to the fallback below, which finds the real station ("COMULLA")
+  // regardless of where it sits in the header.
   // Fall back to the first all-caps alphanumeric token (station code pattern)
   // so multi-word junk like "STOP MESSAGE THANK YOU" doesn't become the unit.
-  const hm = header.match(/^\d+\s+(\S+)/);
+  const hm = header.match(/^\d{1,2}\s+([A-Z][A-Z0-9./]*)(?=\s|$)/);
   const unit = hm
     ? hm[1]
     : (header.split(/\s+/).find((t) => /^[A-Z][A-Z0-9]{1,}$/.test(t)) ?? header.split(/\s+/)[0] ?? header);
