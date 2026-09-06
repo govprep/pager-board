@@ -430,7 +430,46 @@ type ModalTab = "details" | "weather" | "messages";
 // The nearest station's full reading — everything Details only summarises as
 // one FBI line. A plain read: nothing here is fetched (it rides in on the
 // incident row already), so unlike Messages there's no loading state.
+/**
+ * What a rating is a rating of: "Forest — Swamp forests".
+ *
+ * BOM names each fuel twice, once as the fire behaviour model and once as the
+ * vegetation it stands for, and the two are sometimes the same word ("Grassland"
+ * / "Grasslands Pastures and Crops" is close enough to read as a stutter), so a
+ * pair that only repeats itself collapses to one. Empty for rows stamped before
+ * these were captured, which the callers render as nothing rather than a dash.
+ *
+ * Real examples, as they end up beside the number in the modal:
+ *   17 — Forest (Shrub grass dry sclerophyll forests)
+ *    1 — Grasslands Pastures and Crops
+ *   11 — Non combustible (Urban Built up)
+ */
+// BOM's model names are identifiers as much as labels, so some arrive with an
+// underscore in them ("Non_combustible", "Spinifex_woodland"). Stored verbatim;
+// tidied here, at the point of display.
+function prettyModel(model: string | null): string {
+  return (model ?? "").replace(/_/g, " ");
+}
+
+/** " (Forest)", or nothing when the row predates the fuel names. */
+function fuelSuffix(model: string | null): string {
+  return model ? ` (${prettyModel(model)})` : "";
+}
+
+function fuelLabel(model: string | null, name: string | null): string {
+  const m = prettyModel(model);
+  if (!m) return name ?? "";
+  if (!name) return m;
+  const a = m.toLowerCase();
+  const b = name.toLowerCase();
+  if (b.startsWith(a) || a.startsWith(b)) return name;
+  // Parenthesised, not dashed: the caller already joins this on with a dash.
+  return `${m} (${name})`;
+}
+
 function FireWeatherPanel({ fw }: { fw: FireWeather }) {
+  const primaryFuel = fuelLabel(fw.primaryFuelModel, fw.primaryFuelName);
+  const secondaryFuel = fuelLabel(fw.secondaryFuelModel, fw.secondaryFuelName);
   return (
     <div className="modal-body">
       <div className="modal-field">
@@ -445,9 +484,23 @@ function FireWeatherPanel({ fw }: { fw: FireWeather }) {
           {fmt(fw.observedAt)} <span className="dim">({relativeAge(fw.observedAt)} ago)</span>
         </span>
       </div>
+      {/* Split across two rows rather than "23 / 7" on one. The pair is two
+          fuels at this one station, and which fuel is which changes with where
+          the station is — so the number is only actionable next to the country
+          it describes. */}
       <div className="modal-field">
-        <span className="modal-label">Fire Behaviour Index</span>
-        <span className="modal-value">{fw.primaryFbi} primary / {fw.secondaryFbi} secondary</span>
+        <span className="modal-label">Primary FBI</span>
+        <span className="modal-value">
+          {fw.primaryFbi}
+          {primaryFuel && <span className="dim"> — {primaryFuel}</span>}
+        </span>
+      </div>
+      <div className="modal-field">
+        <span className="modal-label">Secondary FBI</span>
+        <span className="modal-value">
+          {fw.secondaryFbi}
+          {secondaryFuel && <span className="dim"> — {secondaryFuel}</span>}
+        </span>
       </div>
       <div className="modal-field">
         <span className="modal-label">Temperature</span>
@@ -599,7 +652,14 @@ function IncidentModal({
             <div className="modal-field">
               <span className="modal-label">Fire Behaviour Index</span>
               <span className="modal-value">
-                {inc.fireWeather.primaryFbi} primary / {inc.fireWeather.secondaryFbi} secondary
+                {/* The fuel model only ("Forest"), not the full vegetation
+                    name — this is the one-line summary, and the Weather tab
+                    carries the long form. */}
+                {inc.fireWeather.primaryFbi} primary
+                {inc.fireWeather.primaryFuelModel && ` (${inc.fireWeather.primaryFuelModel})`}
+                {" / "}
+                {inc.fireWeather.secondaryFbi} secondary
+                {inc.fireWeather.secondaryFuelModel && ` (${inc.fireWeather.secondaryFuelModel})`}
                 <span className="dim"> — {inc.fireWeather.stationName} ({inc.fireWeather.distanceKm} km)</span>
                 <span className="dim">
                   {" "}· observation {relativeAge(inc.fireWeather.observedAt)} old ({fmt(inc.fireWeather.observedAt)})
@@ -1263,7 +1323,15 @@ export default function PagerBoard({
                         {i.fireWeather && (
                           <span
                             className="fbi-tag"
-                            title={`${i.fireWeather.stationName} · ${i.fireWeather.distanceKm} km away · observation ${relativeAge(i.fireWeather.observedAt)} old`}
+                            title={[
+                              // Which half of the badge is which — the column
+                              // is too narrow to say so, and the pair of fuels
+                              // differs from station to station.
+                              `${i.fireWeather.primaryFbi} primary${fuelSuffix(i.fireWeather.primaryFuelModel)}`,
+                              `${i.fireWeather.secondaryFbi} secondary${fuelSuffix(i.fireWeather.secondaryFuelModel)}`,
+                              `${i.fireWeather.stationName} · ${i.fireWeather.distanceKm} km away`,
+                              `observation ${relativeAge(i.fireWeather.observedAt)} old`,
+                            ].join("\n")}
                           >
                             {i.fireWeather.primaryFbi} / {i.fireWeather.secondaryFbi}
                           </span>
