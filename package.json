@@ -13,7 +13,10 @@
     "seed:live": "tsx scripts/seed-live.ts",
     "access": "tsx scripts/access.ts",
     "alerts": "tsx scripts/alerts.ts",
-    "backfill-fbi": "tsx scripts/backfill-fbi.ts"
+    "backfill-fbi": "tsx scripts/backfill-fbi.ts",
+    "migrate:dump": "tsx scripts/migrate-dump.ts",
+    "migrate:restore": "tsx scripts/migrate-restore.ts",
+    "migrate:verify": "tsx scripts/migrate-verify.ts"
   },
   "dependencies": {
     "@supabase/realtime-js": "^2.108.2",
