@@ -18,6 +18,12 @@ const NOISE_WORD_RE = /^\s*(STOP|NNTA|NTA)\s*$/i;
 // \bSTOP\b catches turnout-cancel pages like "ALERT- STOP - NO NEED TO ATTEND"
 // while leaving longer words (STOPFORD ST, STOPPED) untouched.
 const JUNK_RE = /\bNNTA\b|\bSTOP\b|\btest\s+(page|message|call|pager)\b/i;
+// FRNSW pages are legitimately short ("FRINC TYPE: … TURNOUT: … INC: …" with
+// no address). Everything else (RFS positional pages especially) is only that
+// short when a cut-off decode dropped the type/address/coords — e.g.
+// "CCBERVA - 26-12678" is a real station and incident number with nothing
+// else, not a real page.
+const FRNSW_RE = /\bFRINC\b/i;
 
 export function isValidPagerLine(line: string): boolean {
   if (!line || line.length < 5) return false;
@@ -29,6 +35,8 @@ export function isValidPagerLine(line: string): boolean {
   if (REPEAT_RE.test(line)) return false;
   // Must look like a structured pager line.
   if (!STRUCT_RE.test(line)) return false;
+  // Reject short non-FRNSW lines — almost always a truncated decode.
+  if (line.length < 25 && !FRNSW_RE.test(line)) return false;
   // Reject end-of-transmission noise and test pages.
   if (NOISE_WORD_RE.test(line)) return false;
   if (JUNK_RE.test(line)) return false;
