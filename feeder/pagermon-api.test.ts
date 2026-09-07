@@ -110,21 +110,50 @@ test("selectNew leaves the cursor alone when the page holds nothing new", () => 
   assert.equal(selectNew([msg(4), msg(3)], 9).maxId, 9);
 });
 
-test("the first poll seeds the cursor and posts nothing", async () => {
-  // A socket only ever delivered what arrived after it connected. Replaying a
-  // page of backlog on every restart would be a burst of Slack posts and phone
-  // pushes for jobs the board has long since seen.
+test("the first poll replays the page it seeded from", async () => {
+  // Unlike a socket, a poller can see what it missed while the feeder was down,
+  // and that backlog is the whole reason this source is carried: it covers the
+  // south, where a job it holds is routinely one no other source has. Dropping
+  // the seed page on the floor would throw exactly those jobs away on every
+  // restart. Replaying is safe to do because poster.ts dedupes raw lines on a
+  // hash of the text and push.ts refuses anything older than 30 minutes, so a
+  // page the board already knows costs a write and buzzes nobody.
   const rec = recorder();
   const f = feed([msg(3), msg(2), msg(1)], [msg(4), msg(3), msg(2), msg(1)]);
   const poller = makeApiPoller(rec.post, inst, { fetchJson: f.fetchJson });
 
   await poller.tick();
-  assert.equal(rec.posted.length, 0, "seeding must not post");
+  assert.equal(rec.posted.length, 1, "the seed page is worth having");
+  assert.deepEqual(
+    rec.posted[0].lines.map((l) => l.raw),
+    ["page 1", "page 2", "page 3"],
+    "oldest first, like any other poll",
+  );
 
   await poller.tick();
-  assert.equal(rec.posted.length, 1);
-  assert.deepEqual(rec.posted[0].lines.map((l) => l.raw), ["page 4"]);
-  assert.equal(rec.posted[0].source, "test");
+  assert.equal(rec.posted.length, 2);
+  assert.deepEqual(rec.posted[1].lines.map((l) => l.raw), ["page 4"]);
+  assert.equal(rec.posted[1].source, "test");
+});
+
+test("a seeded backlog only lets the newest few onto the board", async () => {
+  // Everything on the seed page is recorded, but only the most recent handful
+  // may reach the board. A feeder that has been down for hours would otherwise
+  // announce a whole shift's worth of finished jobs at once — the pages are
+  // still worth keeping in the raw feed, they are just not news.
+  const rec = recorder();
+  const f = feed([msg(5), msg(4), msg(3), msg(2), msg(1)]);
+  const poller = makeApiPoller(rec.post, inst, { fetchJson: f.fetchJson }, undefined, 50, 2);
+
+  await poller.tick();
+
+  const lines = rec.posted[0].lines;
+  assert.deepEqual(lines.map((l) => l.raw), ["page 1", "page 2", "page 3", "page 4", "page 5"]);
+  assert.deepEqual(
+    lines.map((l) => l.boardEligible),
+    [false, false, false, true, true],
+    "the budget is spent on the newest, not the first ones read",
+  );
 });
 
 test("a message already seen is not posted twice", async () => {
@@ -132,12 +161,13 @@ test("a message already seen is not posted twice", async () => {
   const f = feed([msg(1)], [msg(2), msg(1)], [msg(2), msg(1)]);
   const poller = makeApiPoller(rec.post, inst, { fetchJson: f.fetchJson });
 
-  await poller.tick(); // seed
+  await poller.tick(); // seed, replays page 1
   await poller.tick(); // 2 is new
   await poller.tick(); // nothing new
 
-  assert.equal(rec.posted.length, 1, "the third poll had nothing to post");
-  assert.deepEqual(rec.posted[0].lines.map((l) => l.raw), ["page 2"]);
+  assert.equal(rec.posted.length, 2, "the third poll had nothing to post");
+  assert.deepEqual(rec.posted[0].lines.map((l) => l.raw), ["page 1"]);
+  assert.deepEqual(rec.posted[1].lines.map((l) => l.raw), ["page 2"]);
 });
 
 test("the instance's own policy still applies on this path", async () => {
@@ -153,7 +183,7 @@ test("the instance's own policy still applies on this path", async () => {
   await poller.tick();
   await poller.tick();
 
-  const lines = rec.posted[0].lines;
+  const lines = rec.posted[1].lines;
   assert.deepEqual(lines.map((l) => l.raw), ["page 2", "page 3", "page 4"]);
   assert.equal(lines[0].boardEligible, true, "an ordinary page belongs on the board");
   assert.equal(lines[1].boardEligible, false, "ignore means muted");
@@ -188,11 +218,12 @@ test("a failed poll leaves the cursor where it was", async () => {
   };
   const poller = makeApiPoller(rec.post, inst, { fetchJson });
 
-  await poller.tick(); // seed at 2
+  await poller.tick(); // seed at 2, replaying pages 1 and 2
   await poller.tick(); // throws
   await poller.tick(); // recovers, still nothing newer than 2
 
-  assert.deepEqual(rec.posted, [], "nothing newer than the seed ever arrived");
+  assert.equal(rec.posted.length, 1, "nothing newer than the seed ever arrived");
+  assert.deepEqual(rec.posted[0].lines.map((l) => l.raw), ["page 1", "page 2"]);
 });
 
 test("a poll that throws does not take the feeder down", async () => {

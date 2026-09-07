@@ -168,7 +168,20 @@ curl -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:1080 \
 ```
 
 On startup the feeder logs `[forcequit] routing via socks5://127.0.0.1:1080`
-and then `[forcequit] polling …/api/messages, cursor seeded at id N`.
+and then `[forcequit] polling …/api/messages, cursor seeded at id N, replaying
+M message(s)`.
+
+That replay is the one behaviour where the poller differs from the socket it
+replaced, and it is deliberate. A socket only ever delivered what arrived after
+it connected, so anything paged while the feeder was restarting was simply
+lost. A poller can see it, and for this source that backlog is most of the
+value — it covers the south, where a job it carries is usually one no other
+source has. So the seed page is posted rather than dropped, with only its
+newest 30 board-worthy lines still counted as news; the rest are recorded in
+the raw feed and kept off the board. Re-posting pages the board already knows
+is cheap and quiet: `feeder/poster.ts` dedupes raw lines on a hash of the text,
+and `feeder/push.ts` refuses anything older than 30 minutes, so nobody's phone
+buzzes for a job that finished an hour ago.
 
 Keep the tunnel supervised — a Task Scheduler job at logon on Windows (set it to
 restart on failure), or a systemd unit with `Restart=always` on a Linux box.

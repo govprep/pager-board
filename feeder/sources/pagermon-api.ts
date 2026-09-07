@@ -66,6 +66,37 @@ export const DEFAULT_LIMIT = 50;
 export const DEFAULT_POLL_MS = 60_000;
 const MIN_POLL_MS = 30_000;
 
+/**
+ * How many of the seed page's messages may still reach the board.
+ *
+ * Everything on that page is recorded either way; this is only about what
+ * counts as news. 30 is what sources/pagermon.ts allows itself for the same
+ * reason — enough to carry a job or two that broke while the feeder was
+ * restarting, not enough to announce a whole shift at once.
+ */
+export const DEFAULT_SEED_BUDGET = 30;
+
+/**
+ * Keep the newest `budget` board-eligible lines eligible; record the rest.
+ *
+ * Spent newest-first, because a restart's worth of backlog is most useful at
+ * its recent end — the lines are in oldest-first order by the time they get
+ * here, so the budget is applied from the back.
+ */
+function withSeedBudget<T extends { boardEligible?: boolean }>(
+  lines: T[],
+  budget: number,
+): T[] {
+  let left = budget;
+  const out = [...lines];
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (!out[i].boardEligible) continue;
+    if (left > 0) left--;
+    else out[i] = { ...out[i], boardEligible: false };
+  }
+  return out;
+}
+
 export function apiUrl(baseUrl: string, limit: number): string {
   return `${baseUrl.replace(/\/$/, "")}/api/messages?limit=${limit}`;
 }
@@ -118,6 +149,7 @@ export function makeApiPoller(
   deps: ApiDeps,
   agent?: unknown,
   limit: number = DEFAULT_LIMIT,
+  seedBudget: number = DEFAULT_SEED_BUDGET,
 ): { tick: () => Promise<void> } {
   const tag = `[${inst.label}]`;
   const url = apiUrl(inst.baseUrl, limit);
@@ -134,23 +166,28 @@ export function makeApiPoller(
       const messages = Array.isArray(body) ? body : (body?.messages ?? []);
       const { fresh, maxId } = selectNew(messages, lastId);
 
-      // The first poll only marks where the feed had got to. A socket delivered
-      // nothing that predated it, and replaying a page of backlog on every
-      // restart would mean a burst of Slack posts and phone pushes for jobs the
-      // board saw hours ago.
-      if (!seeded) {
-        lastId = maxId;
-        seeded = true;
-        console.log(`${tag} polling ${inst.baseUrl}/api/messages, cursor seeded at id ${maxId}`);
-        return;
-      }
-
       lastId = maxId;
       if (!fresh.length) return;
 
-      const lines = fresh
+      let lines = fresh
         .map((m) => toLine(m, inst))
         .filter((l): l is NonNullable<typeof l> => l !== null);
+
+      // The first poll carries whatever the feeder missed while it was down,
+      // which for this source is the point rather than an inconvenience — it
+      // covers the south, and a job it holds is usually one nobody else has.
+      // But a page is two hours of traffic, so only the newest few of them are
+      // still news: the rest are recorded raw and kept off the board, the same
+      // trade sources/pagermon.ts makes when it seeds.
+      if (!seeded) {
+        seeded = true;
+        lines = withSeedBudget(lines, seedBudget);
+        console.log(
+          `${tag} polling ${inst.baseUrl}/api/messages, cursor seeded at id ${maxId}, ` +
+            `replaying ${lines.length} message(s)`,
+        );
+      }
+
       if (lines.length) await post(lines, inst.label);
     } catch (err) {
       // The cursor is deliberately untouched here: advancing past messages we
