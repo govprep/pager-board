@@ -14,7 +14,7 @@ npm run dev
 # open http://localhost:3000
 ```
 
-The board boots seeded with sample incidents so every filter works immediately.
+The board requires an enrolled device and a configured Supabase database. See `docs/access.md` for invite management and `docs/audit.md` for the security migration and local validation.
 
 ## Pager line format
 
@@ -41,6 +41,7 @@ case the socket dropped), on returning to the foreground, and after a wipe —
 
 ```bash
 curl -X POST http://localhost:3000/api/incidents \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
   -H "Content-Type: application/json" \
   -d '{"message":"2 STSUTTO - 26-118273 - Chimney fire - FIRECALL - 10 NORTH ST,SUTTON,YASS VALLEY (NSW),2620 - [149.255855,-35.158894]"}'
 ```

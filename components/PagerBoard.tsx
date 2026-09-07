@@ -2,6 +2,9 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
+import dynamic from "next/dynamic";
+import logo from "@/public/logo.jpg";
 import type { Incident, FireWeather, PagerMessage, RawStatus } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { toIncident } from "@/lib/incident-row";
@@ -10,11 +13,16 @@ import { dedupeMessages } from "@/lib/incident-messages";
 import { fullerOf, isLaterType } from "@/lib/incident-merge";
 import { lgaFromLocation, lgaKey } from "@/lib/lga";
 import EnableAlerts from "@/components/EnableAlerts";
-import IncidentMap from "@/components/IncidentMap";
+import { useDialog } from "@/components/use-dialog";
 import Clock from "@/components/Clock";
 import LiveDot, { type LiveState } from "@/components/LiveDot";
 import { fmtTime as fmt, dateKey, relativeAge } from "@/lib/time";
 import { pushSupported, isFollowing, followIncident, unfollowIncident } from "@/lib/push-client";
+
+const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
+  ssr: false,
+  loading: () => <div className="map-fallback" role="status">Loading map…</div>,
+});
 
 // "09/08 14:32:07" — a job's pages can straddle midnight, so the per-incident
 // message log carries the date as well as the clock time.
@@ -161,7 +169,7 @@ function mergeById(...lists: Incident[][]): Incident[] {
   const byId = new Map<string, Incident>();
   for (const list of lists) for (const i of list) byId.set(i.id, i);
   return [...byId.values()].sort((a, b) =>
-    a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : 0,
+    a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0,
   );
 }
 
@@ -316,52 +324,70 @@ function BoardSkeleton() {
 // Per-incident "Follow updates" toggle. Subscribing enables device push (if it
 // isn't already) and registers this device to be notified when a unit is added
 // to this incident. Hidden entirely when push isn't available.
-type FollowState = "loading" | "off" | "on" | "busy" | "unsupported";
+type FollowState = "loading" | "off" | "on" | "busy" | "unsupported" | "error";
 
 function FollowButton({ incidentNo }: { incidentNo: string }) {
   const [state, setState] = useState<FollowState>("loading");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
+    setState("loading");
+    setError("");
     if (!pushSupported()) {
       setState("unsupported");
       return;
     }
     isFollowing(incidentNo).then((f) => {
       if (active) setState(f ? "on" : "off");
-    });
+    }).catch(() => { if (active) setState("error"); });
     return () => { active = false; };
   }, [incidentNo]);
 
   if (state === "unsupported") return null;
 
   async function toggle() {
+    const previous = state;
+    setError("");
+    try {
+    if (state === "error") {
+      setState("loading");
+      setState(await isFollowing(incidentNo) ? "on" : "off");
+      return;
+    }
     if (state === "on") {
       setState("busy");
       const ok = await unfollowIncident(incidentNo);
+      if (!ok) setError("Couldn't change follow settings. Try again.");
       setState(ok ? "off" : "on");
     } else if (state === "off") {
       setState("busy");
       const ok = await followIncident(incidentNo);
+      if (!ok) setError("Couldn't follow this incident. Check notification permissions and try again.");
       setState(ok ? "on" : "off");
+    }
+    } catch {
+      setState(previous);
+      setError("Couldn't update follow settings. Please try again.");
     }
   }
 
   const busy = state === "busy" || state === "loading";
   const label =
     state === "on" ? "🔔 Following" :
+    state === "error" ? "Retry follow status" :
     busy ? "…" :
     "🔔 Follow updates";
 
   return (
-    <button
+    <><button
       className={`follow-btn${state === "on" ? " on" : ""}`}
       onClick={toggle}
       disabled={busy}
       title="Get a phone alert when a new unit is added to this incident"
     >
       {label}
-    </button>
+    </button>{error && <span className="prefs-warn" role="alert">{error}</span>}</>
   );
 }
 
@@ -381,12 +407,12 @@ type MessagesState =
   | { phase: "error" }
   | { phase: "ready"; rows: PagerMessage[] };
 
-function IncidentMessages({ state }: { state: MessagesState }) {
+function IncidentMessages({ state, onRetry }: { state: MessagesState; onRetry: () => void }) {
   if (state.phase === "loading") {
     return <div className="msg-note">Loading messages…</div>;
   }
   if (state.phase === "error") {
-    return <div className="msg-note">Couldn&apos;t load the messages for this incident.</div>;
+    return <div className="msg-note" role="alert">Couldn&apos;t load the messages for this incident. <button className="chip" onClick={onRetry}>Retry</button></div>;
   }
   if (state.rows.length === 0) {
     return (
@@ -543,13 +569,9 @@ function IncidentModal({
   const { inc, units } = entry;
   const [tab, setTab] = useState<ModalTab>("details");
   const [messages, setMessages] = useState<MessagesState>({ phase: "loading" });
+  const [messageAttempt, setMessageAttempt] = useState(0);
 
-  // Close on Escape.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useDialog(onClose);
 
   // Pulled as soon as the card opens rather than when the tab is picked, so the
   // tab can show how many pages this job has before you go looking.
@@ -583,12 +605,17 @@ function IncidentModal({
   // getToken is a fresh closure on every parent render; re-running on it would
   // refetch for nothing.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inc.incidentNo]);
+  }, [inc.incidentNo, messageAttempt]);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       {/* The fixed height applies only on the message log — see globals.css. */}
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Incident ${inc.incidentNo || "details"}`}
+        tabIndex={-1}
         className={`modal incident-modal${tab === "messages" ? " on-messages" : ""}`}
         onClick={e => e.stopPropagation()}
       >
@@ -603,9 +630,20 @@ function IncidentModal({
             </div>
           </div>
 
-          <div className="modal-tabs" role="tablist">
+          <div className="modal-tabs" role="tablist" aria-label="Incident information" onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+            const current = tabs.indexOf(event.target as HTMLButtonElement);
+            const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+            tabs[next]?.focus();
+            tabs[next]?.click();
+          }}>
             <button
               role="tab"
+              id="incident-details-tab"
+              aria-controls="incident-details-panel"
+              tabIndex={tab === "details" ? 0 : -1}
               aria-selected={tab === "details"}
               className={`modal-tab${tab === "details" ? " on" : ""}`}
               onClick={() => setTab("details")}
@@ -615,6 +653,9 @@ function IncidentModal({
             {inc.fireWeather && (
               <button
                 role="tab"
+                id="incident-weather-tab"
+                aria-controls="incident-weather-panel"
+                tabIndex={tab === "weather" ? 0 : -1}
                 aria-selected={tab === "weather"}
                 className={`modal-tab${tab === "weather" ? " on" : ""}`}
                 onClick={() => setTab("weather")}
@@ -624,6 +665,9 @@ function IncidentModal({
             )}
             <button
               role="tab"
+              id="incident-messages-tab"
+              aria-controls="incident-messages-panel"
+              tabIndex={tab === "messages" ? 0 : -1}
               aria-selected={tab === "messages"}
               className={`modal-tab${tab === "messages" ? " on" : ""}`}
               onClick={() => setTab("messages")}
@@ -640,7 +684,7 @@ function IncidentModal({
             take the Mapbox instance with it, so every trip back to this tab
             would re-geocode the address and rebuild the map from scratch,
             losing whatever the user had panned or zoomed to. */}
-        <div className="modal-body" hidden={tab !== "details"}>
+        <div className="modal-body" id="incident-details-panel" role="tabpanel" aria-labelledby="incident-details-tab" tabIndex={0} hidden={tab !== "details"}>
           <div className="modal-field">
             <span className="modal-label">Incident Type</span>
             {inc.type
@@ -703,9 +747,9 @@ function IncidentModal({
           )}
         </div>
 
-        {tab === "weather" && inc.fireWeather && <FireWeatherPanel fw={inc.fireWeather} />}
+        {inc.fireWeather && <div id="incident-weather-panel" role="tabpanel" aria-labelledby="incident-weather-tab" tabIndex={0} hidden={tab !== "weather"}><FireWeatherPanel fw={inc.fireWeather} /></div>}
 
-        {tab === "messages" && <IncidentMessages state={messages} />}
+        <div className="messages-panel" id="incident-messages-panel" role="tabpanel" aria-labelledby="incident-messages-tab" tabIndex={0} hidden={tab !== "messages"}><IncidentMessages state={messages} onRetry={() => setMessageAttempt((n) => n + 1)} /></div>
       </div>
     </div>
   );
@@ -725,6 +769,12 @@ export default function PagerBoard({
   // hasn't answered yet are different things, and "No incidents." is a lie about
   // the second one.
   const [loading, setLoading] = useState(true);
+  const [feedError, setFeedError] = useState("");
+  const [pageError, setPageError] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const refreshSequence = useRef(0);
+  const realtimeRevision = useRef(0);
   // Whether the Realtime socket is joined. When it isn't, the board is running on
   // the 30s heartbeat below, and the topbar says so rather than leaving a stalled
   // board looking like a quiet one.
@@ -839,7 +889,7 @@ export default function PagerBoard({
       });
       if (!res.ok) return null;
       const data = await res.json();
-      return Array.isArray(data.incidents) ? data.incidents : [];
+      return Array.isArray(data.incidents) ? data.incidents : null;
     } catch {
       return null;
     }
@@ -850,9 +900,15 @@ export default function PagerBoard({
   // authoritative (reflects deletes/wipes); a full page means more rows exist
   // below, so fold it into the older pages we've already loaded.
   async function refresh() {
+    const sequence = ++refreshSequence.current;
+    const revision = realtimeRevision.current;
     const page = await fetchPage();
+    if (sequence !== refreshSequence.current) return;
     setLoading(false);
-    if (!page) return;
+    if (!page) { setFeedError("Couldn't refresh incidents. Check your connection and try again."); return; }
+    setFeedError("");
+    // An older HTTP snapshot must not overwrite a newer live update.
+    if (revision !== realtimeRevision.current) { scheduleRefresh(); return; }
     if (page.length < PAGE_SIZE) {
       setIncidents(page);
       setHasMore(false);
@@ -874,10 +930,11 @@ export default function PagerBoard({
   // re-upserting history rather than a job being paged; the scroll fetch will
   // find it in its proper place.
   function applyRow(inc: Incident) {
+    realtimeRevision.current += 1;
     setIncidents((prev) => {
       const oldest = prev[prev.length - 1];
       const known = prev.some((p) => p.id === inc.id);
-      if (!known && hasMoreRef.current && oldest && inc.receivedAt < oldest.receivedAt) {
+      if (!known && hasMoreRef.current && oldest && (inc.receivedAt < oldest.receivedAt || (inc.receivedAt === oldest.receivedAt && inc.id < oldest.id))) {
         return prev;
       }
       return mergeById(prev, [inc]);
@@ -898,17 +955,25 @@ export default function PagerBoard({
   // Append the next older page. Fired by the scroll sentinel below.
   async function loadMore() {
     if (loadingRef.current || !hasMore) return;
+    const sequence = refreshSequence.current;
+    const revision = realtimeRevision.current;
     const oldest = incidentsRef.current[incidentsRef.current.length - 1];
     if (!oldest) return;
     loadingRef.current = true;
     setLoadingMore(true);
     const page = await fetchPage(oldest);
+    if (sequence !== refreshSequence.current || revision !== realtimeRevision.current) {
+      loadingRef.current = false;
+      setLoadingMore(false);
+      return;
+    }
+    setPageError(!page);
     if (page) {
       // Older pages are history reaching the board, not traffic arriving on it —
       // told to the flash diff here rather than guessed at there, since a page
       // this far back can still change what a loaded job says (see the effect).
       pagedInRef.current = true;
-      setIncidents((prev) => mergeById(prev, page));
+      setIncidents((prev) => mergeById(page, prev));
       if (page.length < PAGE_SIZE) setHasMore(false);
     }
     loadingRef.current = false;
@@ -928,6 +993,7 @@ export default function PagerBoard({
   // scrolling for more was disabled while searching, so there was no way to find
   // out otherwise.
   useEffect(() => {
+    setSearchError(false);
     if (!query) {
       setFound([]);
       setSearching(false);
@@ -940,6 +1006,7 @@ export default function PagerBoard({
       const rows = await fetchPage(undefined, query);
       if (!active) return;
       setFound(rows ?? []);
+      setSearchError(!rows);
       setFoundCapped((rows?.length ?? 0) >= SEARCH_LIMIT);
       setSearching(false);
     })();
@@ -947,7 +1014,7 @@ export default function PagerBoard({
   // getToken is a fresh closure on every render, and fetchPage closes over it;
   // keying on the query alone is what keeps this to one request per search.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, searchAttempt]);
 
   useEffect(() => {
     // Load the board now (no server prefetch — the gate renders us empty).
@@ -964,7 +1031,7 @@ export default function PagerBoard({
         (payload) => {
           const row = payload.eventType === "DELETE" ? null : payload.new;
           if (row && typeof row.id === "string") applyRow(toIncident(row));
-          else scheduleRefresh();
+          else { realtimeRevision.current += 1; scheduleRefresh(); }
         },
       )
       .subscribe();
@@ -999,6 +1066,7 @@ export default function PagerBoard({
     window.addEventListener("pageshow", onVisible);
 
     return () => {
+      refreshSequence.current += 1;
       getBrowserClient().removeChannel(channel);
       clearInterval(t);
       clearInterval(liveTimer);
@@ -1169,7 +1237,7 @@ export default function PagerBoard({
   // flips (mounting/unmounting the sentinel) so the observer tracks it.
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || !hasMore || search) return;
+    if (!el || !hasMore || search || pageError) return;
     const obs = new IntersectionObserver(
       (entries) => { if (entries[0].isIntersecting) loadMore(); },
       { rootMargin: "600px" },
@@ -1178,14 +1246,14 @@ export default function PagerBoard({
     return () => obs.disconnect();
   // Re-observe when a load finishes so a still-visible sentinel keeps paging.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMore, search, loadingMore]);
+  }, [hasMore, search, loadingMore, pageError]);
 
   return (
     <div className="app">
       {/* header */}
       <header className="topbar" ref={topbarRef}>
         <div className="brand">
-          <img src="/logo.jpg" alt="BelterHub" />
+          <Image src={logo} alt="BelterHub" sizes="160px" />
         </div>
 
         <div className="topbar-spacer" />
@@ -1196,6 +1264,7 @@ export default function PagerBoard({
             <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
           </svg>
           <input
+            aria-label="Search every incident"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search every incident…"
@@ -1234,7 +1303,9 @@ export default function PagerBoard({
           rather than under them — the point of a cap is to be read before you
           conclude the older job you're after doesn't exist. Outside the scrolling
           list so it stays put while you read down the matches. */}
-      {search && merged.length > 0 && (
+      {feedError && <div className="feed-error" role="alert">{feedError} <button className="chip" onClick={() => void refresh()}>Retry</button></div>}
+      {searchError && search && <div className="feed-error" role="alert">Couldn't search all incidents. <button className="chip" onClick={() => setSearchAttempt((n) => n + 1)}>Retry search</button></div>}
+      {search && merged.length > 0 && !searchError && (
         <div className="search-note">
           {searching
             ? "Searching every incident…"
@@ -1312,7 +1383,7 @@ export default function PagerBoard({
                     >
                       <td>
                         {i.incidentNo
-                          ? <button className="inc-link" onClick={open}>{i.incidentNo}</button>
+                          ? <button className="inc-link" onClick={open} aria-label={`Open incident ${i.incidentNo}`}>{i.incidentNo}</button>
                           : <span className="dim">—</span>}
                       </td>
                       <td>
@@ -1398,7 +1469,7 @@ export default function PagerBoard({
             ))}
             {hasMore && !search && (
               <tr ref={sentinelRef} className="load-sentinel">
-                <td colSpan={6}>{loadingMore ? "Loading earlier incidents…" : ""}</td>
+                <td colSpan={6}>{pageError ? <button className="chip" onClick={() => void loadMore()}>Couldn't load earlier incidents. Retry</button> : loadingMore ? "Loading earlier incidents…" : ""}</td>
               </tr>
             )}
           </tbody>
@@ -1406,7 +1477,7 @@ export default function PagerBoard({
 
         {loading && merged.length === 0 ? (
           <BoardSkeleton />
-        ) : merged.length === 0 ? (
+        ) : merged.length === 0 && !feedError && !searchError ? (
           <div className="empty">
             {searching
               ? "Searching every incident…"
@@ -1419,6 +1490,7 @@ export default function PagerBoard({
 
       {selected && (
         <IncidentModal
+          key={selected.inc.id}
           entry={selected}
           getToken={getToken}
           onClose={() => setSelected(null)}

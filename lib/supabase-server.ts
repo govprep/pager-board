@@ -14,7 +14,7 @@ import WebSocket from "ws";
 // client still has to construct one to exist at all.
 export function createServerClient(url: string, key: string): SupabaseClient {
   return createClient(url, key, {
-    auth: { persistSession: false },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     // `ws`'s constructor typings carry a server-mode overload
     // (`new (address: null, ...)`) that doesn't structurally match
     // WebSocketLikeConstructor — harmless at runtime, since the client-mode

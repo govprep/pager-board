@@ -111,29 +111,37 @@ export async function applyStandDowns(
   let units = 0;
   let whole = 0;
 
-  for (const sd of standDowns) {
-    const { data, error } = await db
-      .from("incidents")
-      .select("id, unit")
-      .eq("incident_no", sd.incidentNo);
+  const byIncident = new Map<string, { id: string; unit: string }[]>();
+  const numbers = [...new Set(standDowns.map((sd) => sd.incidentNo))];
+  for (let offset = 0; offset < numbers.length; offset += 200) {
+    const { data, error } = await db.from("incidents")
+      .select("id, unit, incident_no").in("incident_no", numbers.slice(offset, offset + 200));
     if (error) {
       console.error(`[${source}] stand-down lookup:`, error.message);
       continue;
     }
+    for (const row of data ?? []) {
+      const rows = byIncident.get(row.incident_no) ?? [];
+      rows.push(row);
+      byIncident.set(row.incident_no, rows);
+    }
+  }
 
-    const rows = data ?? [];
+  for (const sd of standDowns) {
+    const rows = byIncident.get(sd.incidentNo) ?? [];
     if (!rows.length) continue; // cancels a job we never saw
 
     const named = rows.filter((r) => unitsNamedBy(sd, [r.unit ?? ""]).length > 0);
     const targets = named.length ? named : rows;
-    if (named.length) units += named.length;
-    else whole++;
 
     const { error: updateError } = await db
       .from("incidents")
       .update({ stopped_at: stoppedAt })
       .in("id", targets.map((r) => r.id));
-    if (updateError) console.error(`[${source}] stand-down update:`, updateError.message);
+    if (updateError) {
+      console.error(`[${source}] stand-down update:`, updateError.message);
+    } else if (named.length) units += named.length;
+    else whole++;
   }
 
   if (units || whole) {

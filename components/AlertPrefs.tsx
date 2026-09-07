@@ -6,6 +6,7 @@ import { DEFAULT_PREFS, type AlertPrefs } from "@/lib/alert-prefs";
 import { lgaKey } from "@/lib/lga";
 import { KNOWN_LGAS } from "@/lib/nsw-lgas";
 import { allFrnswStations, frnswStationName, turnoutKey } from "@/lib/frnsw-stations";
+import { useDialog } from "@/components/use-dialog";
 
 // Picks which incidents this phone gets buzzed for.
 //
@@ -37,19 +38,17 @@ export default function AlertPrefsModal({
   const [error, setError] = useState("");
   const [lgaQuery, setLgaQuery] = useState("");
   const [stationQuery, setStationQuery] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const dialogRef = useDialog(onClose);
 
   useEffect(() => {
+    let active = true;
+    setError("");
     getAlertStatus()
-      .then((s) => setPrefs(s.prefs))
-      .finally(() => setLoaded(true));
-  }, []);
-
-  // Close on Escape, like the incident modal.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+      .then((s) => { if (active) { setPrefs(s.prefs); setLoaded(true); } })
+      .catch(() => { if (active) setError("Couldn't load your alert preferences. Please retry."); });
+    return () => { active = false; };
+  }, [loadAttempt]);
 
   // Selected LGAs are compared on the normalised key so a name typed by hand
   // ("Queanbeyan-Palerang Regional") matches the same area picked from the list.
@@ -84,12 +83,18 @@ export default function AlertPrefsModal({
   }
 
   async function save() {
+    if (saving || !loaded) return;
     setSaving(true);
     setError("");
-    const ok = await saveAlertPrefs(prefs);
-    setSaving(false);
-    if (ok) onClose();
-    else setError("Couldn't save — check notifications are enabled for this device.");
+    try {
+      const ok = await saveAlertPrefs(prefs);
+      if (ok) onClose();
+      else setError("Couldn't save — check notifications are enabled for this device.");
+    } catch {
+      setError("Couldn't save your preferences. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   // Every area we can offer: the ones on the loaded board (which carry a live
@@ -136,14 +141,14 @@ export default function AlertPrefsModal({
 
   return (
     <div className="modal-overlay prefs-overlay" onClick={onClose}>
-      <div className="modal prefs-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Alert areas" tabIndex={-1} className="modal prefs-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="modal-inc">Alert areas</span>
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {!loaded ? (
-          <div className="modal-body"><span className="dim">Loading…</span></div>
+          <div className="modal-body">{error ? <div role="alert">{error} <button className="chip" onClick={() => setLoadAttempt((n) => n + 1)}>Retry</button></div> : <span className="dim" role="status">Loading…</span>}</div>
         ) : (
           <div className="modal-body">
             {/* everything vs. narrowed */}
@@ -191,6 +196,7 @@ export default function AlertPrefsModal({
 
                 <input
                   className="prefs-input"
+                  aria-label="Search RFS areas"
                   value={lgaQuery}
                   onChange={(e) => setLgaQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -247,6 +253,7 @@ export default function AlertPrefsModal({
 
                 <input
                   className="prefs-input"
+                  aria-label="Search FRNSW stations"
                   value={stationQuery}
                   onChange={(e) => setStationQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -292,7 +299,7 @@ export default function AlertPrefsModal({
                 Nothing picked — you won’t get any alerts until you add an area or a station.
               </span>
             )}
-            {error && <span className="prefs-warn">{error}</span>}
+            {error && <span className="prefs-warn" role="alert">{error}</span>}
 
             <div className="prefs-actions">
               <button className="prefs-cancel" onClick={onClose}>Cancel</button>

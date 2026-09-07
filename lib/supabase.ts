@@ -1,3 +1,4 @@
+import "server-only";
 import { createServerClient } from "./supabase-server";
 
 // Server-side singleton — uses the service role key, never exposed to the browser.

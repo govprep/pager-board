@@ -39,7 +39,7 @@ function mergeByHash(...lists: PagerMessage[][]): PagerMessage[] {
   const byHash = new Map<string, PagerMessage>();
   for (const list of lists) for (const m of list) byHash.set(m.hash, m);
   return [...byHash.values()].sort((a, b) =>
-    a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : 0,
+    a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : a.hash < b.hash ? 1 : a.hash > b.hash ? -1 : 0,
   );
 }
 
@@ -51,6 +51,12 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [pageError, setPageError] = useState(false);
+  const generation = useRef(0);
+  const refreshSequence = useRef(0);
+  const tokenRef = useRef(getToken);
+  tokenRef.current = getToken;
   // Drives the relative-age gutter. Starts null so the server and the first
   // client render agree; ticks slowly because the column is coarse (m/h/d).
   const [now, setNow] = useState<number | null>(null);
@@ -86,7 +92,7 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
   const fetchPage = useCallback(
     async (before?: PagerMessage): Promise<PagerMessage[] | null> => {
       try {
-        const token = getToken();
+        const token = tokenRef.current();
         const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
         if (before) {
           params.set("before", before.receivedAt);
@@ -101,19 +107,27 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
         });
         if (!res.ok) return null;
         const data = await res.json();
-        return Array.isArray(data.messages) ? data.messages : [];
+        return Array.isArray(data.messages) ? data.messages : null;
       } catch {
         return null;
       }
     },
-    [getToken, query, status],
+    [query, status],
   );
 
   // Pull the newest page. A short page means it's the whole result set, so treat
   // it as authoritative; a full page means older rows exist below it.
   const refresh = useCallback(async () => {
+    const current = generation.current;
+    const sequence = ++refreshSequence.current;
     const page = await fetchPage();
-    if (!page) return;
+    if (current !== generation.current || sequence !== refreshSequence.current) return;
+    setLoading(false);
+    if (!page) {
+      setError("Couldn't refresh the feed. Check your connection and try again.");
+      return;
+    }
+    setError("");
     if (page.length < PAGE_SIZE) {
       setMessages(page);
       setHasMore(false);
@@ -121,19 +135,27 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
       setMessages((prev) => mergeByHash(prev, page));
       if (messagesRef.current.length === 0) setHasMore(true);
     }
-    setLoading(false);
   }, [fetchPage]);
 
   // Append the next older page. Fired by the scroll sentinel below.
   async function loadMore() {
     if (loadingRef.current || !hasMore) return;
+    const current = generation.current;
+    const sequence = refreshSequence.current;
     const oldest = messagesRef.current[messagesRef.current.length - 1];
     if (!oldest) return;
     loadingRef.current = true;
     setLoadingMore(true);
     const page = await fetchPage(oldest);
+    if (current !== generation.current) return;
+    if (sequence !== refreshSequence.current) {
+      loadingRef.current = false;
+      setLoadingMore(false);
+      return;
+    }
+    setPageError(!page);
     if (page) {
-      setMessages((prev) => mergeByHash(prev, page));
+      setMessages((prev) => mergeByHash(page, prev));
       if (page.length < PAGE_SIZE) setHasMore(false);
     }
     loadingRef.current = false;
@@ -145,11 +167,17 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
   // Reset and reload whenever the query or the status filter changes — the
   // keyset cursor from the previous result set doesn't apply to the new one.
   useEffect(() => {
+    generation.current += 1;
+    loadingRef.current = false;
+    setLoadingMore(false);
+    setError("");
+    setPageError(false);
     setMessages([]);
     messagesRef.current = [];
     setHasMore(false);
     setLoading(true);
     refresh();
+    return () => { generation.current += 1; };
   }, [refresh]);
 
   // Live pushes, plus the same resilience the board has: a heartbeat poll in
@@ -214,7 +242,7 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
   // keeps paging.
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || !hasMore) return;
+    if (!el || !hasMore || pageError) return;
     const obs = new IntersectionObserver(
       (entries) => { if (entries[0].isIntersecting) loadMore(); },
       { rootMargin: "600px" },
@@ -222,7 +250,7 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
     obs.observe(el);
     return () => obs.disconnect();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMore, loadingMore]);
+  }, [hasMore, loadingMore, pageError]);
 
   return (
     <div className="app">
@@ -249,6 +277,7 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
             <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
           </svg>
           <input
+            aria-label="Search every pager line"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search every line…"
@@ -266,13 +295,15 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
             key={f.key}
             className={`chip${filter === f.key ? " on" : ""}`}
             onClick={() => setFilter(f.key)}
+            aria-pressed={filter === f.key}
           >
             {f.label}
           </button>
         ))}
       </div>
 
-      <div className="list-wrap">
+      {error && <div className="feed-error" role="alert">{error} <button className="chip" onClick={() => void refresh()}>Retry</button></div>}
+      <div className="list-wrap" aria-busy={loading}>
         <table className="raw-table">
           <thead>
             <tr>
@@ -340,13 +371,13 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
             ))}
             {hasMore && (
               <tr ref={sentinelRef} className="load-sentinel">
-                <td colSpan={6}>{loadingMore ? "Loading earlier messages…" : ""}</td>
+                <td colSpan={6}>{pageError ? <button className="chip" onClick={() => void loadMore()}>Couldn't load earlier messages. Retry</button> : loadingMore ? "Loading earlier messages…" : ""}</td>
               </tr>
             )}
           </tbody>
         </table>
 
-        {messages.length === 0 && (
+        {messages.length === 0 && !error && (
           <div className="empty">
             {loading
               ? "Loading…"

@@ -6,8 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "test": "node --import tsx --test feeder/*.test.ts lib/*.test.ts",
+    "lint": "node scripts/lint.mjs",
+    "test": "node --conditions=react-server --import tsx --test feeder/*.test.ts lib/*.test.ts",
     "feeder": "tsx feeder/index.ts",
     "feeder:auth-telegram": "tsx feeder/auth-telegram.ts",
     "seed:live": "tsx scripts/seed-live.ts",
@@ -16,7 +16,8 @@
     "backfill-fbi": "tsx scripts/backfill-fbi.ts",
     "migrate:dump": "tsx scripts/migrate-dump.ts",
     "migrate:restore": "tsx scripts/migrate-restore.ts",
-    "migrate:verify": "tsx scripts/migrate-verify.ts"
+    "migrate:verify": "tsx scripts/migrate-verify.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@supabase/realtime-js": "^2.108.2",

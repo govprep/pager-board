@@ -67,8 +67,10 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
     if (Notification.permission === "denied") return setState("denied");
 
     // Already granted? Reflect whether we hold a live subscription.
+    let active = true;
     navigator.serviceWorker.getRegistration().then(async (reg) => {
       const sub = reg && (await reg.pushManager.getSubscription());
+      if (!active) return;
       setState(sub ? "subscribed" : "prompt");
       if (!sub) return;
       // Re-announce a subscription we already hold. It's the only moment a
@@ -77,22 +79,25 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
       // the user to save preferences would leave the old row pushing for weeks.
       // Idempotent: permission is already granted and the subscription is
       // reused, so nothing prompts.
-      await ensureSubscribed();
+      const endpoint = await ensureSubscribed();
+      if (!active) return;
+      if (!endpoint) { setState("error"); return; }
       // After the reconcile, so a device that inherits the areas it picked on a
       // previous endpoint isn't asked to pick them again.
-      await offerPicker();
-    });
+      await offerPicker(() => active);
+    }).catch(() => { if (active) setState("error"); });
+    return () => { active = false; };
   }, []);
 
   // Devices enrolled before the area picker shipped are on "everything" by
   // default — a setting nobody chose and nobody can see. Open the picker for
   // them once, then leave them alone whatever they decide (including closing it,
   // hence the local flag: the server only records an actual save).
-  async function offerPicker() {
+  async function offerPicker(isActive: () => boolean) {
     try {
       if (localStorage.getItem(PICKER_OFFERED_KEY)) return;
       const { chosen } = await getAlertStatus();
-      if (chosen) return;
+      if (chosen || !isActive()) return;
       localStorage.setItem(PICKER_OFFERED_KEY, "1");
       setShowPrefs(true);
     } catch {
@@ -132,7 +137,7 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
   // the only way to reach the area picker and to see that this device has alerts
   // on. Hiding it from a desktop that had already enabled them would leave it
   // notifying with nothing in the UI to turn it off.
-  if (!touch && state !== "subscribed") return null;
+  if (!touch && state !== "subscribed" && state !== "error") return null;
 
   if (state === "needs-install") {
     return (

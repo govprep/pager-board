@@ -60,9 +60,13 @@ function inviteLink(code: string): string {
 // Find a member by exact id, else unique case-insensitive label match.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function findMember(needle: string): Promise<any | null> {
-  const byId = await db.from("members").select("*").eq("id", needle).maybeSingle();
-  if (byId.data) return byId.data;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(needle)) {
+    const { data, error } = await db.from("members").select("id, label").eq("id", needle).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (data) return data;
+  }
   const byLabel = await db.from("members").select("*").ilike("label", needle).limit(2);
+  if (byLabel.error) throw new Error(byLabel.error.message);
   if (byLabel.data && byLabel.data.length === 1) return byLabel.data[0];
   if (byLabel.data && byLabel.data.length > 1) {
     console.error(`"${needle}" matches multiple members — use the id instead.`);
@@ -79,6 +83,7 @@ async function create(label: string) {
   let code = genCode();
   for (let i = 0; i < 5; i++) {
     const clash = await db.from("members").select("id").eq("code", code).maybeSingle();
+    if (clash.error) throw new Error(clash.error.message);
     if (!clash.data) break;
     code = genCode();
   }
@@ -102,9 +107,10 @@ async function list() {
   if (error) throw new Error(error.message);
   if (!members?.length) return console.log('No members yet:  npm run access new "Name"');
 
-  const { data: devices } = await db
+  const { data: devices, error: devicesError } = await db
     .from("member_devices")
     .select("member_id, revoked_at");
+  if (devicesError) throw new Error(devicesError.message);
   const used = new Map<string, number>();
   for (const d of devices ?? []) {
     if (!d.revoked_at) used.set(d.member_id, (used.get(d.member_id) ?? 0) + 1);

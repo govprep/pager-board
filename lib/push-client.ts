@@ -6,6 +6,7 @@
 // subscribe flow lives in one place.
 
 import { DEFAULT_PREFS, type AlertPrefs } from "./alert-prefs";
+import { authenticatedFetch } from "./session-client";
 
 // The VAPID public key is safe to ship to the client; the private key stays on
 // the feeder. Without it there's nothing to subscribe against.
@@ -21,28 +22,16 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
   return out;
 }
 
-// A stable id for this device, so the server can recognise a re-subscribe as the
-// same phone rather than a second one. Derived from the durable invite token the
-// access gate already stores (components/AccessGate.tsx), hashed so the push
-// table never holds the credential itself. Empty when the device isn't enrolled
-// or crypto.subtle is unavailable — the server just skips the reconcile.
-const DEVICE_TOKEN_KEY = "belterhub.invite";
-
-async function deviceKey(): Promise<string> {
-  let token: string | null = null;
-  try {
-    token = localStorage.getItem(DEVICE_TOKEN_KEY);
-  } catch {
-    return ""; // storage blocked (private mode, iframe)
-  }
-  if (!token || !globalThis.crypto?.subtle) return "";
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+async function requireSuccess(response: Response): Promise<void> {
+  if (response.ok) return;
+  const data = await response.json().catch(() => null);
+  throw new Error(typeof data?.error === "string" ? data.error : "Unable to update alerts. Please retry.");
 }
 
 /** True when this browser can do web push at all and we have a key to use. */
 export function pushSupported(): boolean {
   return (
+    typeof window !== "undefined" &&
     !!VAPID_PUBLIC_KEY &&
     "serviceWorker" in navigator &&
     "PushManager" in window &&
@@ -61,10 +50,18 @@ export async function currentEndpoint(): Promise<string | null> {
 /**
  * Register the service worker, request permission, subscribe, and persist the
  * subscription. Returns the endpoint on success, or null if push is
- * unsupported, permission was denied, or saving failed. Safe to call repeatedly
+ * unsupported or permission was denied. Saving failures throw an error. Safe to call repeatedly
  * — it reuses an existing subscription.
  */
-export async function ensureSubscribed(): Promise<string | null> {
+let subscribing: Promise<string | null> | null = null;
+
+export function ensureSubscribed(): Promise<string | null> {
+  // Mount-time reconciliation and a user's click share the same operation.
+  subscribing ??= subscribeDevice().finally(() => { subscribing = null; });
+  return subscribing;
+}
+
+async function subscribeDevice(): Promise<string | null> {
   if (!pushSupported()) return null;
 
   const reg = await navigator.serviceWorker.register("/sw.js");
@@ -76,19 +73,31 @@ export async function ensureSubscribed(): Promise<string | null> {
     if (permission !== "granted") return null;
   }
 
-  const sub =
+  let sub =
     (await reg.pushManager.getSubscription()) ??
     (await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY!),
     }));
 
-  const res = await fetch("/api/push/subscribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...sub.toJSON(), deviceKey: await deviceKey() }),
-  });
-  return res.ok ? sub.endpoint : null;
+  const save = () => authenticatedFetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sub.toJSON()),
+    });
+  let res = await save();
+  if (res.status === 409) {
+    // Legacy endpoints without provable ownership cannot be claimed. Rotate
+    // the browser's own subscription instead of taking over the existing row.
+    if (!await sub.unsubscribe()) throw new Error("Unable to renew alerts. Please retry.");
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY!),
+    });
+    res = await save();
+  }
+  await requireSuccess(res);
+  return sub.endpoint;
 }
 
 export interface AlertStatus {
@@ -102,17 +111,20 @@ export interface AlertStatus {
 }
 
 /**
- * This device's area preferences. Returns the defaults ("everything", never
- * chosen) when the device isn't subscribed or the request fails, so the modal
- * always has something sane to render.
+ * This device's area preferences. An unsubscribed device starts with defaults;
+ * request failures throw so the UI cannot overwrite saved preferences blindly.
  */
 export async function getAlertStatus(): Promise<AlertStatus> {
   const endpoint = await currentEndpoint();
   if (!endpoint) return { prefs: DEFAULT_PREFS, chosen: false };
-  const res = await fetch(`/api/push/prefs?endpoint=${encodeURIComponent(endpoint)}`);
-  if (!res.ok) return { prefs: DEFAULT_PREFS, chosen: false };
+  const res = await authenticatedFetch(`/api/push/prefs?endpoint=${encodeURIComponent(endpoint)}`);
+  await requireSuccess(res);
   const data = await res.json();
-  return { prefs: data.prefs ?? DEFAULT_PREFS, chosen: !!data.chosen };
+  if (!data.prefs || typeof data.prefs.alertAll !== "boolean" ||
+      !Array.isArray(data.prefs.lgas) || !Array.isArray(data.prefs.stations)) {
+    throw new Error("Invalid notification settings response. Please retry.");
+  }
+  return { prefs: data.prefs, chosen: !!data.chosen };
 }
 
 /**
@@ -122,12 +134,13 @@ export async function getAlertStatus(): Promise<AlertStatus> {
 export async function saveAlertPrefs(prefs: AlertPrefs): Promise<boolean> {
   const endpoint = await ensureSubscribed();
   if (!endpoint) return false;
-  const res = await fetch("/api/push/prefs", {
+  const res = await authenticatedFetch("/api/push/prefs", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ endpoint, ...prefs }),
   });
-  return res.ok;
+  await requireSuccess(res);
+  return true;
 }
 
 /** Whether this device is following unit-added updates for the given incident. */
@@ -135,8 +148,8 @@ export async function isFollowing(incidentNo: string): Promise<boolean> {
   const endpoint = await currentEndpoint();
   if (!endpoint) return false;
   const qs = new URLSearchParams({ incidentNo, endpoint });
-  const res = await fetch(`/api/push/follow?${qs}`);
-  if (!res.ok) return false;
+  const res = await authenticatedFetch(`/api/push/follow?${qs}`);
+  await requireSuccess(res);
   const data = await res.json();
   return !!data.following;
 }
@@ -148,22 +161,24 @@ export async function isFollowing(incidentNo: string): Promise<boolean> {
 export async function followIncident(incidentNo: string): Promise<boolean> {
   const endpoint = await ensureSubscribed();
   if (!endpoint) return false;
-  const res = await fetch("/api/push/follow", {
+  const res = await authenticatedFetch("/api/push/follow", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ incidentNo, endpoint }),
   });
-  return res.ok;
+  await requireSuccess(res);
+  return true;
 }
 
 /** Stop following updates for an incident on this device. */
 export async function unfollowIncident(incidentNo: string): Promise<boolean> {
   const endpoint = await currentEndpoint();
   if (!endpoint) return true; // nothing subscribed → already not following
-  const res = await fetch("/api/push/follow", {
+  const res = await authenticatedFetch("/api/push/follow", {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ incidentNo, endpoint }),
   });
-  return res.ok;
+  await requireSuccess(res);
+  return true;
 }

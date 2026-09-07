@@ -62,7 +62,8 @@ export function makeWriter(): Writer {
     if (error) throw new Error(error.message);
     // Drop thread mappings too, so a re-ingest starts fresh parent messages
     // instead of replying into now-orphaned Slack threads.
-    await db.from("incident_threads").delete().neq("incident_no", "");
+    const { error: threadError } = await db.from("incident_threads").delete().neq("incident_no", "");
+    if (threadError) throw new Error(threadError.message);
   }
 
   async function write(lines: PagerLine[], source: string) {

@@ -16,6 +16,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { filterLiteral } from "../lib/query";
 import { createServerClient } from "../lib/supabase-server";
 import { alertKeysFor, mergeAlertKeys, wantsIncident, type AlertPrefs } from "../lib/alert-prefs";
 
@@ -86,7 +87,8 @@ async function list() {
   if (error) throw new Error(error.message);
   if (!data?.length) return console.log("No devices enrolled for push.");
 
-  const { data: follows } = await db.from("incident_subscriptions").select("endpoint");
+  const { data: follows, error: followsError } = await db.from("incident_subscriptions").select("endpoint");
+  if (followsError) throw new Error(followsError.message);
   const followCount = new Map<string, number>();
   for (const f of follows ?? []) followCount.set(f.endpoint, (followCount.get(f.endpoint) ?? 0) + 1);
 
@@ -118,7 +120,7 @@ async function check(ref: string) {
   const { data: pages, error } = await db
     .from("incidents")
     .select("*")
-    .or(`incident_no.eq.${ref},id.eq.${ref}`);
+    .or(`incident_no.eq.${filterLiteral(ref)},id.eq.${filterLiteral(ref)}`);
   if (error) throw new Error(error.message);
   if (!pages?.length) return console.log(`No incident matching "${ref}".`);
 
@@ -132,8 +134,9 @@ async function check(ref: string) {
     console.log("  ⚠ nothing to match on: only devices set to everything can get this.");
   }
 
-  const { data: subs } = await db.from("push_subscriptions").select("*");
+  const { data: subs, error: subsError } = await db.from("push_subscriptions").select("*");
   console.log("");
+  if (subsError) throw new Error(subsError.message);
   for (const row of subs ?? []) {
     const hit = wantsIncident(prefsOf(row), keys);
     console.log(`  ${hit ? "ALERTED" : "  —    "} ${shortEndpoint(row.endpoint)}  ${describe(row)}`);

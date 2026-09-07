@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { listIncidents, addRawMessages, clearStore } from "@/lib/store";
 import { verifyAccessToken } from "@/lib/access";
+import { readPagination, validateLines } from "@/lib/query";
 
 export const dynamic = "force-dynamic";
 
@@ -47,14 +48,19 @@ export async function GET(req: Request) {
   if (!(await isAuthed(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const url = new URL(req.url);
-  const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 500);
-  const before = url.searchParams.get("before") ?? undefined;
-  const beforeId = url.searchParams.get("beforeId") ?? undefined;
-  const q = url.searchParams.get("q") ?? undefined;
-
-  const incidents = await listIncidents(limit, before, beforeId, q);
-  return NextResponse.json({ incidents });
+  let page: ReturnType<typeof readPagination>;
+  try {
+    page = readPagination(new URL(req.url).searchParams, "beforeId");
+  } catch (error) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 });
+  }
+  try {
+    const incidents = await listIncidents(page.limit, page.before, page.key, page.q);
+    return NextResponse.json({ incidents });
+  } catch (error) {
+    console.error("[incidents] list failed", error);
+    return NextResponse.json({ error: "Unable to load incidents" }, { status: 503 });
+  }
 }
 
 // POST /api/incidents -> ingest raw pager line(s).
@@ -68,6 +74,7 @@ export async function GET(req: Request) {
 //     -H "Content-Type: application/json" \
 //     -d '{"message":"2 STSUTTO - 26-118999 - Test fire - FIRECALL - 1 TEST ST,SUTTON,YASS VALLEY (NSW),2620 - [149.25,-35.15]"}'
 export async function POST(req: Request) {
+  if (!isAdmin(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   let lines: string[] = [];
 
   const contentType = req.headers.get("content-type") ?? "";
@@ -81,11 +88,18 @@ export async function POST(req: Request) {
       const text = await req.text();
       lines = text.split(/\r?\n/);
     }
+    lines = validateLines(lines);
   } catch {
     return NextResponse.json({ error: "Could not read request body" }, { status: 400 });
   }
 
-  const added = await addRawMessages(lines);
+  let added;
+  try {
+    added = await addRawMessages(lines);
+  } catch (error) {
+    console.error("[incidents] ingestion failed", error);
+    return NextResponse.json({ error: "Unable to ingest messages" }, { status: 503 });
+  }
   if (added.length === 0) {
     return NextResponse.json(
       { error: "No valid pager lines found in request" },
@@ -106,6 +120,11 @@ export async function DELETE(req: Request) {
   if (!isAdmin(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  await clearStore();
-  return NextResponse.json({ cleared: true });
+  try {
+    await clearStore();
+    return NextResponse.json({ cleared: true });
+  } catch (error) {
+    console.error("[incidents] clear failed", error);
+    return NextResponse.json({ error: "Unable to clear incidents" }, { status: 503 });
+  }
 }

@@ -31,16 +31,16 @@ const BEARING = -18;
 
 // Forward-geocode an address to a centre point, biased to Australia. Returns
 // null on a miss or any error — the caller shows a fallback message.
-async function geocode(address: string, token: string): Promise<Coords | null> {
+async function geocode(address: string, token: string, signal: AbortSignal): Promise<Coords | null> {
   try {
     const url =
       `https://api.mapbox.com/search/geocode/v6/forward` +
       `?q=${encodeURIComponent(address)}&country=au&limit=1&access_token=${token}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal });
     if (!res.ok) return null;
     const data = await res.json();
     const c = data?.features?.[0]?.geometry?.coordinates;
-    if (!Array.isArray(c) || c.length < 2) return null;
+    if (!Array.isArray(c) || c.length < 2 || !Number.isFinite(c[0]) || !Number.isFinite(c[1]) || Math.abs(c[0]) > 180 || Math.abs(c[1]) > 90) return null;
     return { lng: c[0], lat: c[1] };
   } catch {
     return null;
@@ -57,6 +57,7 @@ export default function IncidentMap({
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const [style, setStyle] = useState<StyleKey>("standard");
+  const [mapFailed, setMapFailed] = useState(false);
   // Resolved centre: the page coords, or whatever geocoding turned up.
   const [center, setCenter] = useState<Coords | null>(coords ?? null);
   const [status, setStatus] = useState<"ready" | "locating" | "missing">(
@@ -67,9 +68,14 @@ export default function IncidentMap({
 
   // Geocode the address when we have no coords.
   useEffect(() => {
-    if (coords || !address || !token) return;
+    setMapFailed(false);
+    if (coords) { setCenter(coords); setStatus("ready"); return; }
+    setCenter(null);
+    if (!address || !token) { setStatus("missing"); return; }
+    setStatus("locating");
     let alive = true;
-    geocode(address, token).then((found) => {
+    const controller = new AbortController();
+    geocode(address, token, controller.signal).then((found) => {
       if (!alive) return;
       if (found) {
         setCenter(found);
@@ -80,8 +86,9 @@ export default function IncidentMap({
     });
     return () => {
       alive = false;
+      controller.abort();
     };
-  }, [coords, address, token]);
+  }, [coords?.lat, coords?.lng, address, token]);
 
   // Build the map once we have a centre. Rebuilds if the centre lands later
   // (i.e. after geocoding resolves).
@@ -89,22 +96,32 @@ export default function IncidentMap({
     if (!token || !center || !container.current) return;
     mapboxgl.accessToken = token;
 
-    const m = new mapboxgl.Map({
+    let m: mapboxgl.Map | undefined;
+    try {
+    m = new mapboxgl.Map({
       container: container.current,
       style: STYLES.standard,
       center: [center.lng, center.lat],
       zoom: ZOOM,
       pitch: PITCH,
       bearing: BEARING,
-      attributionControl: false,
+      attributionControl: true,
     });
+    m.on("error", () => setMapFailed(true));
+    m.on("load", () => setMapFailed(false));
     m.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "top-right");
     new mapboxgl.Marker({ color: "#e01b24" }).setLngLat([center.lng, center.lat]).addTo(m);
     setStyle("standard");
     map.current = m;
+    } catch {
+      m?.remove();
+      map.current = null;
+      setMapFailed(true);
+      return;
+    }
 
     return () => {
-      m.remove();
+      m?.remove();
       map.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -112,28 +129,32 @@ export default function IncidentMap({
 
   function switchTo(next: StyleKey) {
     if (next === style || !map.current) return;
-    map.current.setStyle(STYLES[next]);
-    setStyle(next);
+    try {
+      map.current.setStyle(STYLES[next]);
+      setStyle(next);
+    } catch { setMapFailed(true); }
   }
 
   if (!token) {
-    return <span className="dim">Set NEXT_PUBLIC_MAPBOX_TOKEN to show the map.</span>;
+    return <div className="map-fallback" role="status">Map preview is unavailable.</div>;
   }
   if (status === "missing") {
-    return <span className="dim">No location to map for this incident.</span>;
+    return <div className="map-fallback" role="status">No location to map for this incident.</div>;
   }
 
   return (
     <div className="incident-map">
-      <div ref={container} className="incident-map-canvas" />
+      <div ref={container} className="incident-map-canvas" aria-label="Incident location map" />
+      {mapFailed && <div className="map-locating" role="status">Map preview is unavailable. Use the address link to open maps.</div>}
       {status === "locating" && (
-        <div className="map-locating">Finding address…</div>
+        <div className="map-locating" role="status">Finding address…</div>
       )}
       {center && (
         <div className="map-style-toggle">
           <button
             type="button"
             className={style === "standard" ? "active" : ""}
+            aria-pressed={style === "standard"}
             onClick={() => switchTo("standard")}
           >
             Map
@@ -141,6 +162,7 @@ export default function IncidentMap({
           <button
             type="button"
             className={style === "satellite" ? "active" : ""}
+            aria-pressed={style === "satellite"}
             onClick={() => switchTo("satellite")}
           >
             Satellite

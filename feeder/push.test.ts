@@ -65,7 +65,7 @@ class FakeQuery implements PromiseLike<any> {
     return this;
   }
   is(col: string, val: any) {
-    this.filters.push((r) => (r[col] ?? null) === val);
+    this.filters.push((r) => (col.split(".").reduce((v: any, key) => v?.[key], r) ?? null) === val);
     return this;
   }
   // Only ever called as .not(col, "is", null).
@@ -81,7 +81,10 @@ class FakeQuery implements PromiseLike<any> {
     this.sort = { col, asc: opts?.ascending !== false };
     return this;
   }
-  select(_cols?: string) {
+  select(cols?: string) {
+    if (cols?.includes("member_devices!inner")) {
+      this.filters.push((r) => r.member_devices != null && r.member_devices.members != null);
+    }
     return this;
   }
 
@@ -133,7 +136,7 @@ function fakeDb(tables: Tables): SupabaseClient {
   return {
     from(table: string) {
       return {
-        select: (_c?: string) => new FakeQuery(tables, table, "select"),
+        select: (cols?: string) => new FakeQuery(tables, table, "select").select(cols),
         delete: () => new FakeQuery(tables, table, "delete"),
         update: (payload: any) => new FakeQuery(tables, table, "update", payload),
         upsert: (payload: any, _o?: any) => new FakeQuery(tables, table, "upsert", payload),
@@ -160,7 +163,7 @@ function twoPageIncident(): Tables {
   return {
     incidents: [page("CMEASCR1"), page("CMLLAND1")],
     push_subscriptions: [
-      { endpoint: "https://push.example/phone-a", p256dh: "p", auth: "a", alert_all: true, lgas: [], stations: [] },
+      { endpoint: "https://fcm.googleapis.com/phone-a", p256dh: keys.publicKey, auth: Buffer.alloc(16).toString("base64url"), alert_all: true, lgas: [], stations: [], member_devices: { revoked_at: null, members: { revoked_at: null } } },
     ],
     incident_subscriptions: [],
   };
@@ -193,7 +196,7 @@ function fireIncident(): Tables {
       },
     ],
     push_subscriptions: [
-      { endpoint: "https://push.example/phone-a", p256dh: "p", auth: "a", alert_all: true, lgas: [], stations: [] },
+      { endpoint: "https://fcm.googleapis.com/phone-a", p256dh: keys.publicKey, auth: Buffer.alloc(16).toString("base64url"), alert_all: true, lgas: [], stations: [], member_devices: { revoked_at: null, members: { revoked_at: null } } },
     ],
     incident_subscriptions: [],
   };
@@ -256,4 +259,37 @@ test("a second page arriving after the first has been pushed is not a new-incide
   await pushPending(db, ["26-1-CMLLAND1"]);
 
   assert.equal(sent.filter((s) => s.title.startsWith("🚨")).length, 1);
+});
+
+test("new alerts exclude revoked members, revoked devices and unowned subscriptions", async () => {
+  const tables = twoPageIncident();
+  const active = tables.push_subscriptions[0];
+  tables.push_subscriptions.push(
+    { ...active, endpoint: "https://fcm.googleapis.com/revoked-device", member_devices: { revoked_at: new Date().toISOString(), members: { revoked_at: null } } },
+    { ...active, endpoint: "https://fcm.googleapis.com/revoked-member", member_devices: { revoked_at: null, members: { revoked_at: new Date().toISOString() } } },
+    { ...active, endpoint: "https://fcm.googleapis.com/unowned", member_devices: null },
+    { ...active, endpoint: "https://127.0.0.1/private" },
+    { ...active, endpoint: "https://fcm.googleapis.com/bad-keys", auth: "bad" },
+  );
+  const sent = captureSends(0);
+  await pushPending(fakeDb(tables), ["26-1-CMEASCR1"]);
+  assert.deepEqual(sent.map((s) => s.endpoint), [active.endpoint]);
+});
+
+test("follow-up alerts exclude revoked and unowned subscriptions and refuse unsafe URLs", async () => {
+  const tables = twoPageIncident();
+  tables.incidents[0].pushed_at = new Date().toISOString();
+  const active = tables.push_subscriptions[0];
+  tables.push_subscriptions.push(
+    { ...active, endpoint: "https://fcm.googleapis.com/revoked-device", member_devices: { revoked_at: new Date().toISOString(), members: { revoked_at: null } } },
+    { ...active, endpoint: "https://fcm.googleapis.com/revoked-member", member_devices: { revoked_at: null, members: { revoked_at: new Date().toISOString() } } },
+    { ...active, endpoint: "https://fcm.googleapis.com/unowned", member_devices: null },
+    { ...active, endpoint: "http://localhost/private" },
+  );
+  tables.incident_subscriptions = tables.push_subscriptions.map((s) => ({
+    endpoint: s.endpoint, incident_no: "26-1", created_at: new Date().toISOString(),
+  }));
+  const sent = captureSends(0);
+  await pushPending(fakeDb(tables), ["26-1-CMLLAND1"]);
+  assert.deepEqual(sent.map((s) => s.endpoint), [active.endpoint]);
 });

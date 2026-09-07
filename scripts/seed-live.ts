@@ -215,9 +215,11 @@ async function postLines(lines: string[], source: string) {
     console.log(`  [${source}] nothing to post`);
     return;
   }
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) throw new Error("SUPABASE_SERVICE_ROLE_KEY is required to ingest messages");
   const res = await fetch(`${BOARD}/api/incidents`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({ messages: lines }),
   });
   const data = (await res.json()) as {

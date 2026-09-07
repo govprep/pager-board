@@ -8,6 +8,7 @@ import { attachFireWeather } from "./fbi";
 import { withInferredOrigin } from "./origin";
 import { toIncident } from "./incident-row";
 import { supabase } from "./supabase";
+import { incidentFilter, keysetFilter } from "./query";
 
 // ---------------------------------------------------------------------------
 // Supabase-backed store.  All functions are async.
@@ -19,13 +20,6 @@ import { supabase } from "./supabase";
 const LIST_COLUMNS =
   "id, incident_no, type, unit, location, coords, received_at, raw, stopped_at, " +
   "primary_fbi, secondary_fbi, fbi_station, fbi_distance_km, fbi_observed_at, fbi_observation";
-
-// Columns a board search looks through. `raw` is the whole pager line and so
-// covers most of it, but the parsed columns are searched in their own right:
-// FRNSW type names are normalised on the way in (lib/type-names.ts), so the
-// words the board displays — and therefore the words someone types — aren't
-// always the words that came over the air.
-const SEARCH_COLUMNS = ["incident_no", "type", "unit", "location", "raw"];
 
 /**
  * A page of incidents, newest first. Pass the `(before, beforeId)` of the
@@ -49,29 +43,9 @@ export async function listIncidents(
     .order("id", { ascending: false })
     .limit(limit);
 
-  // Same escaping as the raw feed below: drop the characters PostgREST uses to
-  // separate filter values, then escape LIKE's wildcards, so a search for "%"
-  // matches a literal % instead of everything and can't reshape the filter.
-  // Trimmed again afterwards: a term made only of the stripped characters would
-  // otherwise become a search for a run of spaces, which matches whatever happens
-  // to be padded rather than nothing.
-  const term = (search ?? "")
-    .replace(/[\\,()]/g, " ")
-    .replace(/[%_]/g, "\\$&")
-    .trim();
-  if (term) {
-    q = q.or(SEARCH_COLUMNS.map((c) => `${c}.ilike.%${term}%`).join(","));
-  }
-
-  if (before) {
-    // Rows strictly older than the (received_at, id) cursor. The tie-breaking
-    // form is a second `or`, which can't be combined with the search's one, so a
-    // searched page falls back to the timestamp alone — searches are served as a
-    // single capped page (see the caller), so no cursor is in play there.
-    q = beforeId && !term
-      ? q.or(`received_at.lt.${before},and(received_at.eq.${before},id.lt.${beforeId})`)
-      : q.lt("received_at", before);
-  }
+  const filter = incidentFilter(search, before, beforeId);
+  if (filter) q = q.or(filter);
+  if (before && !beforeId) q = q.lt("received_at", before);
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
@@ -84,7 +58,8 @@ export async function getIncident(id: string): Promise<Incident | undefined> {
     .select("*")
     .eq("id", id)
     .maybeSingle();
-  if (error || !data) return undefined;
+  if (error) throw new Error(error.message);
+  if (!data) return undefined;
   return toIncident(data);
 }
 
@@ -251,7 +226,7 @@ export async function listPagerMessages({
 
   if (before) {
     query = beforeHash
-      ? query.or(`received_at.lt.${before},and(received_at.eq.${before},hash.lt.${beforeHash})`)
+      ? query.or(keysetFilter(before, "hash", beforeHash))
       : query.lt("received_at", before);
   }
 

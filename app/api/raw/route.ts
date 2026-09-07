@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listPagerMessages } from "@/lib/store";
 import { verifyAccessToken } from "@/lib/access";
+import { readPagination } from "@/lib/query";
 import type { RawStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +31,13 @@ export async function GET(req: Request) {
   }
 
   const url = new URL(req.url);
-  const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 500);
-  const before = url.searchParams.get("before") ?? undefined;
-  const beforeHash = url.searchParams.get("beforeHash") ?? undefined;
-  const q = url.searchParams.get("q")?.trim() || undefined;
+  let page: ReturnType<typeof readPagination>;
+  try {
+    page = readPagination(url.searchParams, "beforeHash");
+  } catch (error) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 });
+  }
+  const { limit, before, key: beforeHash, q } = page;
 
   const statusParam = url.searchParams.get("status");
   const status = STATUSES.includes(statusParam as RawStatus)
@@ -46,6 +50,11 @@ export async function GET(req: Request) {
   const incidentNo =
     url.searchParams.get("incidentNo")?.replace(/[^A-Za-z0-9-]/g, "").slice(0, 64) || undefined;
 
-  const messages = await listPagerMessages({ limit, before, beforeHash, q, status, incidentNo });
-  return NextResponse.json({ messages });
+  try {
+    const messages = await listPagerMessages({ limit, before, beforeHash, q, status, incidentNo });
+    return NextResponse.json({ messages });
+  } catch (error) {
+    console.error("[raw] list failed", error);
+    return NextResponse.json({ error: "Unable to load pager messages" }, { status: 503 });
+  }
 }

@@ -107,11 +107,16 @@ export async function postPending(db: SupabaseClient, ids: string[]): Promise<vo
     const key = groupKey(inc);
 
     // Find (or create) the thread for this incident.
-    const { data: existing } = await db
+    const { data: existing, error: threadError } = await db
       .from("incident_threads")
       .select("channel, thread_ts")
       .eq("incident_no", key)
       .maybeSingle();
+
+    if (threadError) {
+      console.error("[slack] thread lookup failed:", threadError.message);
+      continue;
+    }
 
     let threadChannel = existing?.channel;
     let threadTs = existing?.thread_ts;

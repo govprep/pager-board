@@ -11,6 +11,7 @@ import { toIncident as rowToIncident } from "../lib/incident-row";
 import { applianceUnits } from "../lib/units";
 import { makeMutex } from "../lib/mutex";
 import { friendlyType } from "./type-names";
+import { isPushEndpoint, isPushKey } from "../lib/push-validation";
 
 // Sends web-push notifications to subscribed phones. Two kinds of alert:
 //
@@ -170,16 +171,19 @@ interface DbSubscription {
 // A subscription plus the areas that device asked for.
 type SubWithPrefs = DbSubscription & { prefs: AlertPrefs };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function rowToSub(row: any): SubWithPrefs {
+interface SubscriptionRow extends DbSubscription {
+  alert_all: boolean;
+  lgas: string[];
+  stations: string[];
+}
+
+function rowToSub(row: SubscriptionRow): SubWithPrefs {
   return {
     endpoint: row.endpoint,
     p256dh: row.p256dh,
     auth: row.auth,
     prefs: {
-      // A database without the preference columns reads as "everything", which
-      // is what it was doing before they existed.
-      alertAll: row.alert_all ?? true,
+      alertAll: row.alert_all,
       lgas: row.lgas ?? [],
       stations: row.stations ?? [],
     },
@@ -206,10 +210,10 @@ function followTtlDays(): number {
 
 async function sweepFollows(db: SupabaseClient): Promise<void> {
   if (Date.now() - lastSweep < SWEEP_EVERY_MS) return;
-  lastSweep = Date.now();
   const cutoff = new Date(Date.now() - followTtlDays() * 86_400_000).toISOString();
   const { error } = await db.from("incident_subscriptions").delete().lt("created_at", cutoff);
   if (error) console.error("[push] sweep follows:", error.message);
+  else lastSweep = Date.now();
 }
 
 /**
@@ -236,22 +240,33 @@ async function autoFollow(
   if (error) console.error("[push] auto-follow:", error.message);
 }
 
+function validSubscription(s: DbSubscription): boolean {
+  return isPushEndpoint(s.endpoint) && isPushKey(s.p256dh, 65) && isPushKey(s.auth, 16);
+}
+
 async function sendTo(subs: DbSubscription[], payload: string, dead: string[]): Promise<void> {
-  await Promise.all(
-    subs.map(async (s) => {
+  let cursor = 0;
+  // Bound sockets and memory when a statewide alert reaches many devices.
+  await Promise.all(Array.from({ length: Math.min(8, subs.length) }, async () => {
+    while (cursor < subs.length) {
+      const s = subs[cursor++];
+      if (!validSubscription(s)) {
+        console.error("[push] refused an invalid stored subscription");
+        continue;
+      }
       try {
         await webpush.sendNotification(
           { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
           payload,
+          { timeout: 10_000 },
         );
       } catch (err) {
         const status = (err as { statusCode?: number }).statusCode;
-        // 404/410 = subscription expired or was removed → prune it.
         if (status === 404 || status === 410) dead.push(s.endpoint);
-        else console.error(`[push] send failed (${status ?? "?"}):`, (err as Error).message);
+        else console.error("[push] send failed:", status ?? "unknown");
       }
-    }),
-  );
+    }
+  }));
 }
 
 interface Group {
@@ -280,7 +295,7 @@ async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
 
   const { data: rows, error } = await db
     .from("incidents")
-    .select("*")
+    .select("id, incident_no, type, unit, location, coords, received_at, fields, raw, stopped_at, primary_fbi, secondary_fbi, fbi_station, fbi_distance_km, fbi_observed_at, fbi_observation")
     .in("id", ids)
     .is("pushed_at", null)
     .order("received_at", { ascending: true });
@@ -316,8 +331,11 @@ async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
       .select("incident_no")
       .in("incident_no", numbers)
       .not("pushed_at", "is", null);
-    if (priorErr) console.error("[push] fetch prior:", priorErr.message);
-    else for (const r of prior ?? []) known.add(r.incident_no);
+    if (priorErr) {
+      console.error("[push] fetch prior:", priorErr.message);
+      return;
+    }
+    for (const r of prior ?? []) known.add(r.incident_no);
   }
 
   // Every device plus its area preferences — only needed for new-incident
@@ -326,12 +344,18 @@ async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
   const newGroups = [...groups.values()].filter((g) => !(g.incidentNo && known.has(g.incidentNo)));
   let allSubs: SubWithPrefs[] = [];
   if (newGroups.length) {
-    const { data: subs, error: subErr } = await db.from("push_subscriptions").select("*");
-    if (subErr) console.error("[push] fetch subscriptions:", subErr.message);
-    else allSubs = (subs ?? []).map(rowToSub);
+    const { data: subs, error: subErr } = await db.from("push_subscriptions")
+      .select("endpoint, p256dh, auth, alert_all, lgas, stations, member_devices!inner(revoked_at, members!inner(revoked_at))")
+      .is("member_devices.revoked_at", null).is("member_devices.members.revoked_at", null);
+    if (subErr) {
+      console.error("[push] fetch subscriptions:", subErr.message);
+      return;
+    }
+    allSubs = (subs ?? []).filter(validSubscription).map(rowToSub);
   }
 
   const handled: string[] = [];
+  const failed = new Set<string>();
   const dead: string[] = []; // endpoints the push service has retired
   let newCount = 0;
   let updateCount = 0;
@@ -369,6 +393,7 @@ async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
         .eq("incident_no", g.incidentNo);
       if (fErr) {
         console.error("[push] fetch followers:", fErr.message);
+        g.ids.forEach((id) => failed.add(id));
         continue;
       }
       const endpoints = (follows ?? []).map((f) => f.endpoint);
@@ -376,10 +401,12 @@ async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
 
       const { data: subs, error: sErr } = await db
         .from("push_subscriptions")
-        .select("endpoint, p256dh, auth")
+        .select("endpoint, p256dh, auth, member_devices!inner(revoked_at, members!inner(revoked_at))")
+        .is("member_devices.revoked_at", null).is("member_devices.members.revoked_at", null)
         .in("endpoint", endpoints);
       if (sErr) {
         console.error("[push] fetch follower subs:", sErr.message);
+        g.ids.forEach((id) => failed.add(id));
         continue;
       }
 
@@ -422,21 +449,23 @@ async function fanOut(db: SupabaseClient, ids: string[]): Promise<void> {
       // Whoever asked for this area now follows the job, so the units assigned
       // after this first page reach them too. Endpoints the send retired are
       // pruned below, which cascades these rows away with them.
-      const followers = recipients.filter((s) => !s.prefs.alertAll);
+      const followers = recipients.filter((s) => !s.prefs.alertAll && !dead.includes(s.endpoint));
       await autoFollow(db, g.incidentNo, followers);
       followCount += followers.length;
     }
   }
 
   if (dead.length) {
-    await db.from("push_subscriptions").delete().in("endpoint", dead);
+    const { error: pruneError } = await db.from("push_subscriptions").delete().in("endpoint", dead);
+    if (pruneError) console.error("[push] prune expired:", pruneError.message);
   }
 
-  if (handled.length) {
+  const completed = handled.filter((id) => !failed.has(id));
+  if (completed.length) {
     const { error: upErr } = await db
       .from("incidents")
       .update({ pushed_at: new Date().toISOString() })
-      .in("id", handled);
+      .in("id", completed);
     if (upErr) console.error("[push] mark pushed:", upErr.message);
     else
       console.log(
