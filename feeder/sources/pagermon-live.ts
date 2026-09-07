@@ -65,6 +65,16 @@ export interface LiveInstance {
    * it — every other source keeps its direct path.
    */
   proxy?: string;
+  /**
+   * How this instance is read: its Socket.IO broadcast (the default), or its
+   * REST API.
+   *
+   * A host that stops serving `/socket.io/` isn't necessarily a host that has
+   * stopped serving its messages — see sources/pagermon-api.ts, which exists
+   * because forcequit.xyz's Cloudflare now blocks the socket path alone while
+   * `/api/messages` answers normally.
+   */
+  transport?: "socket" | "api";
 }
 
 // Instances disagree on how to spell an agency: pocsag.net says "FRNSW" and
@@ -131,7 +141,7 @@ export function toLine(
 // Mirrors feeder/sources/rfspager.ts — see the note on the connection below.
 // Origin/Referer are per-instance: a browser on the site would send that site's
 // own origin, and a mismatched one is worse than none.
-function browserHeaders(baseUrl: string): Record<string, string> {
+export function browserHeaders(baseUrl: string): Record<string, string> {
   return {
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",

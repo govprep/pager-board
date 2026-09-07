@@ -1,5 +1,6 @@
 import type { PostFn } from "../poster";
 import { pollPagerMonLive, type LiveInstance } from "./pagermon-live";
+import { pollPagerMonApi } from "./pagermon-api";
 
 // ---------------------------------------------------------------------------
 // The public PagerMon instances we listen to. Each is a separate receiver
@@ -19,29 +20,33 @@ export const PUBLIC_INSTANCES: LiveInstance[] = [
   // NSW PSN feed hosted by Forcequit. Same PagerMon build, same message shape,
   // and its lines are byte-identical to pocsag's on the pages both see — it just
   // covers different receivers, so it fills in the Illawarra/Shoalhaven traffic
-  // our other sources are thin on. Worth having: 33 of the 57 incident numbers
-  // it carried in a two-day sample were ones no other source had.
+  // our other sources are thin on. Worth having: over the seven days to
+  // 2026-09-07 it carried 83 messages, 82 of which no other source reported and
+  // 69 of which reached the board.
   //
   // Unreachable from the feeder box directly, not unwanted. Cloudflare 403s
   // that IP on every path and every transport — with a browser User-Agent as
   // much as without — and nothing on our side fixes it. It connects fine from a
-  // residential connection, which is why it only showed up once deployed.
-  //
-  // Retested 2026-09-06: still 403 (cf-ray a369b6a98f505081-SYD). The body is
-  // the WAF block page ("Sorry, you have been blocked … forcequit.xyz"), not
-  // Bot Fight Mode's challenge, so it's a firewall rule on the zone naming the
-  // apex domain. Only the host's operator can lift it — worth asking, with the
-  // IP and that Ray ID, since it's the one fix that needs nothing running.
-  //
-  // Until then it goes out through a residential connection instead: set
+  // residential connection, which is why it only showed up once deployed. Set
   // FEEDER_PROXY_FORCEQUIT to a SOCKS5 proxy on one (see withProxy below and
-  // the README) and this entry switches itself on. Verify the route first —
+  // the README) and this entry switches itself on.
+  //
+  // Read over its REST API rather than its socket, which is why `transport` is
+  // here. On 2026-09-07 the zone started answering `/socket.io/` with the WAF
+  // block page even through the proxy, while every other path on the same host
+  // kept answering that same residential IP normally — `/` 200,
+  // `/api/messages` 200, a missing path still 404. It is the socket endpoint
+  // that is closed, not us that are blocked, so the messages are polled
+  // instead. See sources/pagermon-api.ts.
+  //
+  // Verify the route before restarting the feeder — this needs to be 200 where
+  // the same call without --socks5-hostname is 403:
   //   curl -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:1080 \
-  //     'https://pager.forcequit.xyz/socket.io/?EIO=3&transport=polling'
-  // needs to be 200 where the same call without --socks5-hostname is 403.
+  //     'https://pager.forcequit.xyz/api/messages?limit=1'
   {
     label: "forcequit",
     baseUrl: "https://pager.forcequit.xyz",
+    transport: "api",
     disabled:
       "Cloudflare 403s this host's IP — set FEEDER_PROXY_FORCEQUIT to a SOCKS5 proxy on an unblocked connection",
   },
@@ -98,7 +103,17 @@ export function withProxy(inst: LiveInstance): LiveInstance {
   return { ...inst, proxy, disabled: undefined };
 }
 
-/** Subscribe to every public instance. Each reconnects independently. */
+/**
+ * Start every public instance. Each reconnects — or retries — independently.
+ *
+ * How an instance is read is the instance's own business: most push over
+ * Socket.IO, forcequit is polled over its REST API because its socket path is
+ * blocked at the zone. Both paths end at the same `post`.
+ */
 export function pollPublicPagerMons(post: PostFn): void {
-  for (const inst of PUBLIC_INSTANCES) void pollPagerMonLive(post, withProxy(inst));
+  for (const inst of PUBLIC_INSTANCES) {
+    const withRoute = withProxy(inst);
+    if (withRoute.transport === "api") void pollPagerMonApi(post, withRoute);
+    else void pollPagerMonLive(post, withRoute);
+  }
 }
