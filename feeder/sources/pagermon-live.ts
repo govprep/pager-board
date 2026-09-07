@@ -173,6 +173,9 @@ export async function proxyAgentFor(proxy: string): Promise<unknown> {
  * transports/polling-xhr.js:78 and the ws upgrade at
  * transports/websocket.js:99. It has to arrive as the same object, not a copy.
  *
+ * That holds only on engine.io's Node path, which `forceNode` below is what
+ * keeps us on.
+ *
  * With no agent the key is absent entirely rather than set to undefined, so an
  * unproxied instance is opened with exactly what it was before this existed.
  */
@@ -206,6 +209,20 @@ export function liveSocketOptions(
       polling: { extraHeaders: headers },
       websocket: { extraHeaders: headers },
     },
+    // Use the `ws` package for the upgrade rather than Node's global WebSocket.
+    //
+    // engine.io-client 3.x picks its implementation by sniffing for a global
+    // `WebSocket` at module load, and Node 22 ships one (undici). Left to
+    // itself it takes that branch, where `doOpen` calls `new WebSocketImpl(uri)`
+    // and drops the options object entirely — the agent above and the headers
+    // above it go with it, and the upgrade dials out direct and bare.
+    //
+    // For the unproxied instances that costs them their Cloudflare headers on
+    // the upgrade alone, which those hosts happen to tolerate. For forcequit it
+    // is fatal and silent: the probe leaves from the IP the zone 403s, fails,
+    // and the socket settles back onto long-polling with nothing logged bar the
+    // reconnects. It connected 2441 times that way without upgrading once.
+    forceNode: true,
     ...(agent ? { agent } : {}),
   };
 }

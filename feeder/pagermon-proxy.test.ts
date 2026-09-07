@@ -141,3 +141,53 @@ test("the forcequit entry is the one wired to a proxy, and is off without one", 
   assert.equal(on.disabled, undefined);
   assert.equal(on.proxy, "socks5://127.0.0.1:1080");
 });
+
+// --- the websocket upgrade has to use the Node implementation ----------------
+//
+// The contract pinned above holds only on engine.io's *Node* path. Node 22
+// ships a global `WebSocket` (undici), and engine.io-client 3.x decides which
+// implementation to use by sniffing for one at module load:
+//
+//   if (typeof WebSocket !== 'undefined') BrowserWebSocket = WebSocket;
+//   ...
+//   this.usingBrowserWebSocket = BrowserWebSocket && !opts.forceNode;
+//
+// On that branch `doOpen` constructs `new WebSocketImpl(uri)` and drops the
+// whole options object (transports/websocket.js:120-124) — so the upgrade goes
+// out with neither the SOCKS agent nor the Cloudflare headers, direct from an
+// IP the zone 403s. The probe fails, the socket silently stays on long-polling,
+// and nothing in the log says why: forcequit connected 2441 times without a
+// single upgrade while the unproxied instances upgraded on every dial.
+//
+// `forceNode` is what keeps it on the branch that honours `opts`.
+
+import { createRequire } from "node:module";
+const WSTransport = createRequire(import.meta.url)(
+  "engine.io-client/lib/transports/websocket.js",
+) as new (opts: Record<string, unknown>) => {
+  usingBrowserWebSocket: boolean;
+  agent: unknown;
+};
+
+/** Build engine.io's real websocket transport the way engine.io would. */
+function websocketTransport(opts: Record<string, unknown>) {
+  return new WSTransport({ ...opts, hostname: "pager.example", secure: true, path: "/socket.io" });
+}
+
+test("the websocket upgrade is built with the implementation that honours an agent", () => {
+  const agent = { sentinel: true };
+  const ws = websocketTransport(liveSocketOptions(inst, agent));
+  assert.equal(
+    ws.usingBrowserWebSocket,
+    false,
+    "a global WebSocket must not win — that branch drops opts, agent and headers with it",
+  );
+  assert.equal(ws.agent, agent, "the agent has to survive onto the transport");
+});
+
+test("an unproxied instance upgrades on the same implementation", () => {
+  // Not a proxy feature: the browser headers are dropped by that branch too,
+  // and every one of these hosts is behind Cloudflare.
+  const ws = websocketTransport(liveSocketOptions(inst));
+  assert.equal(ws.usingBrowserWebSocket, false);
+});
