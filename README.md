@@ -61,14 +61,16 @@ saw it.
 | your PagerMon (`PAGERMON_URL`) | REST, authenticated, `id` cursor | yes |
 | rfspager.app | HTML scrape, 90s | yes |
 | pocsag.net | PagerMon Socket.IO, live | yes |
-| pager.forcequit.xyz | PagerMon Socket.IO, live, through a SOCKS proxy | only with `FEEDER_PROXY_FORCEQUIT` set — see below |
+| pager.forcequit.xyz | PagerMon REST, 60s, through a SOCKS proxy | only with `FEEDER_PROXY_FORCEQUIT` set — see below |
 | pager-feed.net | PagerMon Socket.IO, live | yes |
 | Telegram group (`TG_SESSION`) | MTProto, live | yes |
 
-The three public instances are all PagerMon, so they share one client
-(`feeder/sources/pagermon-live.ts`) and one table of hosts
+The three public instances are all PagerMon, so they share one table of hosts
 (`feeder/sources/public-pagermon.ts`). Adding an instance is a line in that
-table; dropping one is deleting the line.
+table; dropping one is deleting the line. Two of them are read over the live
+socket (`feeder/sources/pagermon-live.ts`) and forcequit over the REST API
+(`feeder/sources/pagermon-api.ts`), which is the `transport` field on the entry
+— see below for why that one differs.
 
 pager.forcequit.xyz earns its place on receiver coverage: its lines are the same
 full-fidelity decodes as pocsag's (capcode on every message, addresses complete
@@ -93,10 +95,35 @@ someone's dashboard, not a toggle we can wait out, and no amount of header
 tuning on our end will pass it.
 
 The tidy fix is still to ask. What to send whoever runs the host: the IP
-(`170.64.236.23`), the Ray ID above, and that the request is a Socket.IO
-subscription to `pager.forcequit.xyz`. Cloudflare's own block page tells the
-visitor to email the site owner with exactly that Ray ID. It's the only fix that
-leaves nothing running.
+(`170.64.236.23`), the Ray ID above, and what the request actually is — a
+minute-by-minute read of `pager.forcequit.xyz`'s message API. Cloudflare's own
+block page tells the visitor to email the site owner with exactly that Ray ID.
+It's the only fix that leaves nothing running.
+
+**The socket path closed on 2026-09-07.** Separately from the IP block above,
+`/socket.io/` began answering with the same WAF block page *through the proxy* —
+that is, to the residential IP the zone otherwise serves normally. It is the
+path that is blocked, not the client: measured from the same exit within the
+same minute, `/` answered 200, `/api/messages` answered 200, and a path that
+doesn't exist still 404'd, while `/socket.io/` stayed 403 across query strings,
+a full Chrome header set, `Origin`/`Referer`, cookies from a prior page load,
+HTTP/1.1 and h2, and the path re-cased. The last message this source recorded
+was 13:24 AEST that day.
+
+Anything that would get the socket back from here means defeating bot detection
+on a host we don't run, which isn't a road this project goes down. The same
+messages are on the same host's REST API, which its own web page uses and which
+`robots.txt` allows (`User-agent: *` / `Allow: /`), so the instance is polled
+there instead — `transport: "api"` on its table entry, implemented in
+`feeder/sources/pagermon-api.ts`.
+
+Two measured properties of that endpoint set the shape of the poller. It
+answers newest-first and ignores `since`, so the cursor is ours to keep rather
+than the server's; and it carries about 21.5 messages an hour, so one
+`limit=50` page is over two hours of traffic and a 60s poll has no way to
+outrun it. That interval is set by politeness rather than by staleness — this
+is somebody else's host, and it is a good deal gentler than the socket client
+it replaces, which reconnected thousands of times.
 
 #### Routing it through a connection that isn't blocked
 
@@ -135,24 +162,26 @@ Verify before restarting the feeder — the point is that these two disagree:
 
 ```bash
 curl -o /dev/null -w '%{http_code}\n' \
-  'https://pager.forcequit.xyz/socket.io/?EIO=3&transport=polling'            # 403
+  'https://pager.forcequit.xyz/api/messages?limit=1'                          # 403
 curl -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:1080 \
-  'https://pager.forcequit.xyz/socket.io/?EIO=3&transport=polling'            # 200
+  'https://pager.forcequit.xyz/api/messages?limit=1'                          # 200
 ```
 
 On startup the feeder logs `[forcequit] routing via socks5://127.0.0.1:1080`
-and then `[forcequit] connected via Socket.IO (polling)`.
+and then `[forcequit] polling …/api/messages, cursor seeded at id N`.
 
 Keep the tunnel supervised — a Task Scheduler job at logon on Windows (set it to
 restart on failure), or a systemd unit with `Restart=always` on a Linux box.
-When it drops, that one instance logs connect errors and retries on its usual
-5–30s backoff while everything else carries on; when it comes back the socket
-reconnects on its own. A tunnel that *stalls* rather than drops is covered by
-the same silence watchdog as every other instance (see below): 20 minutes of
-nothing heard and the socket is torn down and redialled.
+When it drops, that one instance logs `poll failed` once a minute while
+everything else carries on, and picks up again by itself when the tunnel is
+back — a poll that fails deliberately leaves the cursor where it was, so the
+messages it couldn't read are still ahead of the mark when it recovers. The
+silence watchdog below covers the two socket instances; a polled one has no
+socket to stall.
 
 An unusable `FEEDER_PROXY_*` value is refused rather than ignored — the feeder
-logs `not connecting — unusable proxy` and leaves that instance down. Connecting
+logs `not connecting — unusable proxy` (or `not polling — unusable proxy`)
+and leaves that instance down. Connecting
 direct instead would mean 403ing in a loop while the log claimed a proxy was in
 use, and `socks-proxy-agent` silently ignores an `http://` URL, so only
 `socks…://` is accepted.
