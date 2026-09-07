@@ -417,6 +417,13 @@ table { width: 100%; border-collapse: collapse; }
 .board-table th:nth-child(4),
 .board-table td:nth-child(4) { padding-left: 8px; padding-right: 8px; }
 
+/* …and the heading over the digits rather than over the badge's leading edge.
+   The badge insets its own text by 9px — a 1px border and 8px of padding — so
+   a heading sitting flush at the cell's padding edge starts 9px to the left of
+   every number beneath it. On a column this narrow, holding two short numbers,
+   that drift is most of the badge. 8 + 9. */
+.board-table th:nth-child(4) { padding-left: 17px; }
+
 thead th {
   position: sticky;
   top: 0;
