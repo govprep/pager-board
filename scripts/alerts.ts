@@ -55,6 +55,7 @@ function prefsOf(row: Row): AlertPrefs {
     alertAll: row.alert_all ?? true,
     lgas: row.lgas ?? [],
     stations: row.stations ?? [],
+    fireDigest: !!row.fire_digest,
   };
 }
 

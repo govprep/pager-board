@@ -186,6 +186,13 @@ alter table public.push_subscriptions
 alter table public.push_subscriptions
   add column if not exists stations  text[]  not null default '{}';
 
+-- Opt-in to the daily BOM fire danger summary (scripts/fire-ratings.ts). Its own
+-- setting, independent of the area lists above — the digest is a once-a-day
+-- statewide notice, not an incident in a patch. Default false: a true opt-in, so
+-- the digest reaches only devices that have turned it on.
+alter table public.push_subscriptions
+  add column if not exists fire_digest boolean not null default false;
+
 -- Which physical device this subscription belongs to: a SHA-256 of the device's
 -- durable invite token (never the token itself). Push services hand out a new
 -- endpoint when they rotate a subscription, which used to leave the old row
@@ -526,5 +533,17 @@ create index if not exists pager_messages_status_received_at_hash_idx
 create index if not exists pager_messages_incident_received_at_hash_idx
   on public.pager_messages(incident_no, received_at desc, hash desc)
   where incident_no is not null;
+
+-- Dedupe key for the daily BOM Fire Danger Ratings push (scripts/fire-ratings.ts).
+-- A single row remembers the "Issued at …" line last summarised and pushed, so
+-- the 16:20 and 16:30 cron runs don't double-send and a restart doesn't re-send.
+-- Server-only: written and read by the service role; the board never needs it.
+create table if not exists public.fire_ratings_state (
+  id        boolean     primary key default true,
+  issued    text        not null,                 -- BOM "Issued at …" line last pushed
+  pushed_at timestamptz not null default now(),
+  constraint fire_ratings_state_singleton check (id)
+);
+alter table public.fire_ratings_state enable row level security;
 
 commit;

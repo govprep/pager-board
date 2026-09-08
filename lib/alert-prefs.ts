@@ -24,9 +24,21 @@ export interface AlertPrefs {
   lgas: string[];
   /** FRNSW turnout numbers, normalised, e.g. ["428", "385"]. */
   stations: string[];
+  /**
+   * Opt-in to the daily BOM fire danger summary (see scripts/fire-ratings.ts).
+   * Independent of the incident lists above — it's a once-a-day statewide
+   * notice, not an incident in your patch — and a true opt-in: off until the
+   * device turns it on. See feeder/push.ts:broadcast.
+   */
+  fireDigest: boolean;
 }
 
-export const DEFAULT_PREFS: AlertPrefs = { alertAll: true, lgas: [], stations: [] };
+export const DEFAULT_PREFS: AlertPrefs = {
+  alertAll: true,
+  lgas: [],
+  stations: [],
+  fireDigest: false,
+};
 
 // Generous caps — they exist to stop a malformed or hostile request storing an
 // unbounded array, not to constrain real use (NSW has ~128 LGAs, 335 stations).
@@ -59,6 +71,8 @@ export function sanitizePrefs(body: unknown): AlertPrefs {
     stations: cleanList(b.stations, MAX_STATIONS, (s) =>
       /^\d{1,4}$/.test(s) ? turnoutKey(s) : "",
     ),
+    // Opt-in: only a real boolean true switches it on; no truthy coercion.
+    fireDigest: b.fireDigest === true,
   };
 }
 

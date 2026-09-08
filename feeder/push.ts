@@ -175,6 +175,7 @@ interface SubscriptionRow extends DbSubscription {
   alert_all: boolean;
   lgas: string[];
   stations: string[];
+  fire_digest?: boolean;
 }
 
 function rowToSub(row: SubscriptionRow): SubWithPrefs {
@@ -186,6 +187,9 @@ function rowToSub(row: SubscriptionRow): SubWithPrefs {
       alertAll: row.alert_all,
       lgas: row.lgas ?? [],
       stations: row.stations ?? [],
+      // Not part of incident matching (wantsIncident ignores it); carried only
+      // to satisfy AlertPrefs. The incident select doesn't fetch it.
+      fireDigest: !!row.fire_digest,
     },
   };
 }
@@ -274,6 +278,65 @@ interface Group {
   incs: Incident[]; // every pending page in this batch for the incident
   ids: string[];
   incidentNo: string;
+}
+
+/** A statewide notice that goes to every device, independent of any incident. */
+export interface BroadcastNote {
+  title: string;
+  body: string;
+  /** Collapses successive sends of the same kind — a daily notice replaces yesterday's. */
+  tag: string;
+  /** Where tapping it lands; defaults to the board root. */
+  url?: string;
+}
+
+/**
+ * Send one notification to every enrolled device, regardless of area
+ * preferences — for statewide, non-incident notices like the daily fire danger
+ * summary. Deliberately skips the alert-pref filtering that `fanOut` does: this
+ * isn't "a job in your patch", it's a once-a-day heads-up everyone gets.
+ *
+ * Shares the incident path's guards: revoked devices and revoked members are
+ * excluded by the same inner-join filter, and endpoints the push service
+ * retires (404/410) are pruned. No-op returning 0 unless VAPID is configured,
+ * so a box without push keys runs this harmlessly.
+ *
+ * Returns the number of devices the note actually reached.
+ */
+export async function broadcast(db: SupabaseClient, note: BroadcastNote): Promise<number> {
+  if (!configure()) {
+    console.warn("[push] VAPID not set — broadcast skipped");
+    return 0;
+  }
+
+  const { data: subs, error } = await db
+    .from("push_subscriptions")
+    .select("endpoint, p256dh, auth, member_devices!inner(revoked_at, members!inner(revoked_at))")
+    .is("member_devices.revoked_at", null)
+    .is("member_devices.members.revoked_at", null)
+    // Opt-in: only devices that asked for the daily digest, never everyone.
+    .eq("fire_digest", true);
+  if (error) {
+    console.error("[push] broadcast fetch subscriptions:", error.message);
+    return 0;
+  }
+
+  const recipients = ((subs as DbSubscription[]) ?? []).filter(validSubscription);
+  const payload = JSON.stringify({
+    title: note.title,
+    body: note.body,
+    url: note.url || process.env.BOARD_URL || "/",
+    tag: note.tag,
+  });
+
+  const dead: string[] = [];
+  await sendTo(recipients, payload, dead);
+  if (dead.length) {
+    const { error: pruneError } = await db.from("push_subscriptions").delete().in("endpoint", dead);
+    if (pruneError) console.error("[push] broadcast prune expired:", pruneError.message);
+  }
+
+  return recipients.length - dead.length;
 }
 
 /**

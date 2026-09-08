@@ -14,6 +14,7 @@
     "access": "tsx scripts/access.ts",
     "alerts": "tsx scripts/alerts.ts",
     "backfill-fbi": "tsx scripts/backfill-fbi.ts",
+    "fire-ratings": "tsx scripts/fire-ratings.ts",
     "migrate:dump": "tsx scripts/migrate-dump.ts",
     "migrate:restore": "tsx scripts/migrate-restore.ts",
     "migrate:verify": "tsx scripts/migrate-verify.ts",

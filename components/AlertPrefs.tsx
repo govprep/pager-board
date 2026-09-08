@@ -294,6 +294,25 @@ export default function AlertPrefsModal({
               </div>
             </div>
 
+            {/* ── Daily fire danger summary ──────────────────────────────
+                Independent of the area scope above: a once-a-day statewide
+                notice, not an incident in your patch. Opt-in, off by default. */}
+            <div className="prefs-section">
+              <label className="prefs-radio">
+                <input
+                  type="checkbox"
+                  checked={prefs.fireDigest}
+                  onChange={(e) => setPrefs((p) => ({ ...p, fireDigest: e.target.checked }))}
+                />
+                <span>
+                  <strong>Daily fire danger summary</strong>
+                  <span className="prefs-sub">
+                    A once-a-day BOM fire danger rating for NSW, each afternoon.
+                  </span>
+                </span>
+              </label>
+            </div>
+
             {nothingPicked && (
               <span className="prefs-warn">
                 Nothing picked — you won’t get any alerts until you add an area or a station.
