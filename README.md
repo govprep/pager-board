@@ -460,12 +460,17 @@ The rest of it:
   a fire in there, orange if there's a rescue, otherwise pale. Zoomed out to the
   whole state you can see where the fires are without opening anything. Tapping
   one opens it.
-- **A new job announces itself** — a blue chip in the bottom-left corner for 20
-  seconds, then it fades (tap it and the map flies to the job), a ring pulsing
-  on the marker for two minutes, and optionally a chime (**♪**, off by default:
-  the tap that turns it on is the gesture browsers require before a page may
-  make a noise). The chip stacks above the open card, so the two never cover
-  each other. Nothing pans the map on its own — a map that jumps while you're
+- **A new job announces itself** four ways: a blue banner across the top for 20
+  seconds and then a fade (tapping it flies the map to the job); its card
+  opening itself in the bottom-left corner, on the same 20 seconds and the same
+  fade; a ring beaconing on the marker for two minutes; and optionally a chime
+  (**♪**, off by default: the tap that turns it on is the gesture browsers
+  require before a page may make a noise).
+
+  The card only opens itself over an empty corner or over another card that
+  opened itself — one you actually asked for is yours until you close it — and
+  hovering or touching an automatic card stops it fading, so it can't disappear
+  mid-read. Nothing pans the map on its own: a map that jumps while you're
   reading it is worse than one you have to tap.
 
   A job only counts as new if this page has never held it *and* it was paged in

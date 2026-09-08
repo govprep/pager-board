@@ -56,9 +56,15 @@ const TICK_MS = 30_000;
 // A job has to have started this recently to count as news rather than as
 // history arriving. Same reasoning, and the same number, as the board's flash.
 const NEW_JOB_MAX_AGE_MS = 10 * 60_000;
-// How long a new job keeps its pulse ring, and how long its toast stays up.
+// How long a new job keeps its pulse ring on the map. Two minutes: long enough
+// to still be beaconing when someone looks up at the screen, short enough that a
+// busy hour doesn't end up with a dozen markers all pulsing at once.
 const PULSE_MS = 120_000;
+// How long the banner announcing it stays up, and how long the card that opens
+// itself for it stays open. Both fade out at the end of it rather than
+// vanishing — the CSS animations in globals.css are timed against these.
 const TOAST_MS = 20_000;
+const CARD_AUTO_MS = 20_000;
 
 const STORE = {
   window: "belterhub.map.window",
@@ -266,13 +272,23 @@ function writeSetting(key: string, value: string) {
 // the top half of the map is the part worth keeping visible. On a pointer it
 // floats over the bottom-left corner. Both are the same markup; globals.css
 // decides which.
+//
+// `auto` marks a card nobody asked for: a job has just been paged and this
+// opened itself to say what it is. Such a card fades out on its own (see
+// CARD_AUTO_MS and the `.map-card.auto` animation), doesn't take keyboard focus
+// away from whatever had it, and stops being automatic the moment it's touched
+// — a card that vanished mid-read would be worse than one that never opened.
 function JobCard({
   placed,
   now,
+  auto,
+  onKeep,
   onClose,
 }: {
   placed: Placed;
   now: number;
+  auto: boolean;
+  onKeep: () => void;
   onClose: () => void;
 }) {
   const { entry, precision, place } = placed;
@@ -285,12 +301,15 @@ function JobCard({
   // marker, is the normal way to use the two together — so all it takes is the
   // focus (for a keyboard) and Escape (for everyone).
   useEffect(() => {
-    card.current?.focus();
+    if (!auto) card.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+  // `auto` is read once, when the card opens: a card that has since been kept
+  // must not re-run this and grab the focus on its way past.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onClose]);
 
   return (
@@ -299,7 +318,10 @@ function JobCard({
       role="dialog"
       aria-label={`Incident ${inc.incidentNo || "details"}`}
       tabIndex={-1}
-      className="map-card"
+      className={`map-card${auto ? " auto" : ""}`}
+      onPointerDown={onKeep}
+      onMouseEnter={onKeep}
+      onFocus={onKeep}
     >
       <div className="map-card-head">
         <div className="map-card-title">
@@ -382,6 +404,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   const [loading, setLoading] = useState(true);
   const [feedError, setFeedError] = useState("");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // True while the open card is one that opened itself for a job that had just
+  // been paged, rather than one somebody asked for. Only such a card closes on
+  // its own.
+  const [autoCard, setAutoCard] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [heat, setHeat] = useState(true);
   const [sound, setSound] = useState(false);
@@ -414,6 +440,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   const hoursRef = useRef(DEFAULT_WINDOW);
   const chimeRef = useRef<(() => void) | null>(null);
   const selectedRef = useRef<string | null>(null);
+  const autoCardRef = useRef(false);
   const placedRef = useRef<Map<string, Placed>>(new Map());
   const heatRef = useRef(true);
   // The style the map is actually showing. A basemap switch is asked for by
@@ -425,6 +452,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   useEffect(() => { heatRef.current = heat; }, [heat]);
   useEffect(() => { hoursRef.current = hours; }, [hours]);
   useEffect(() => { selectedRef.current = selectedKey; }, [selectedKey]);
+  useEffect(() => { autoCardRef.current = autoCard; }, [autoCard]);
 
   // Restore what this device chose last time. In an effect rather than in the
   // useState initialiser so the server and the first client render agree.
@@ -639,13 +667,51 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     return () => { alive = false; };
   }, [entries, token]);
 
+  // ── the open card ─────────────────────────────────────────────────────────
+
+  // Every path in and out of a card goes through these, so the "did anyone ask
+  // for this?" flag can't drift from what's on screen. The refs are written here
+  // rather than in an effect because the new-job pass below reads them in the
+  // same tick as it might set them.
+  const openCard = useCallback((key: string, auto = false) => {
+    selectedRef.current = key;
+    autoCardRef.current = auto;
+    setSelectedKey(key);
+    setAutoCard(auto);
+  }, []);
+
+  const closeCard = useCallback(() => {
+    selectedRef.current = null;
+    autoCardRef.current = false;
+    setSelectedKey(null);
+    setAutoCard(false);
+  }, []);
+
+  // Touched, so it's nobody's business but the reader's from here on.
+  const keepCard = useCallback(() => {
+    if (!autoCardRef.current) return;
+    autoCardRef.current = false;
+    setAutoCard(false);
+  }, []);
+
+  // A card that opened itself closes itself. The fade is CSS (`.map-card.auto`),
+  // timed to finish exactly as this fires.
+  useEffect(() => {
+    if (!autoCard || !selectedKey) return;
+    const t = setTimeout(() => {
+      if (autoCardRef.current) closeCard();
+    }, CARD_AUTO_MS);
+    return () => clearTimeout(t);
+  }, [autoCard, selectedKey, closeCard]);
+
   // ── new jobs ──────────────────────────────────────────────────────────────
   //
   // Every job on the map is compared against the pass before. One we've never
-  // held, and that was paged in the last ten minutes, is news: it rings, it
-  // pulses, and it says so in the corner. The ten minutes is what separates a
-  // job being paged from an older one arriving because the window was widened
-  // or a slow source caught up.
+  // held, and that was paged in the last ten minutes, is news, and it says so
+  // four ways: a banner across the top, its card opening itself in the corner,
+  // a ring beaconing on the marker, and (if it's switched on) a chime. The ten
+  // minutes is what separates a job being paged from an older one arriving
+  // because the window was widened or a slow source caught up.
   useEffect(() => {
     // Not until the first page has landed. The baseline was otherwise taken on
     // the render before it — an empty map — so every recent job on that page
@@ -683,7 +749,14 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       ].slice(0, 4),
     );
     if (soundRef.current) chimeRef.current?.();
-  }, [entries, loading]);
+
+    // ...and the newest of them opens its own card, so the answer to "what was
+    // that?" is already on screen. Only over an empty corner or over another
+    // card that opened itself — a card somebody actually asked for is theirs
+    // until they close it. `arrived` follows `entries`, which is newest first.
+    const newest = arrived[0];
+    if (newest && (!selectedRef.current || autoCardRef.current)) openCard(newest.key, true);
+  }, [entries, loading, openCard]);
 
   // Retire the pulse and the toasts on their own clocks.
   useEffect(() => {
@@ -949,7 +1022,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
 
     map.on("click", LYR.point, (e) => {
       const key = clicked(e.features?.[0])?.properties?.key;
-      if (typeof key === "string") setSelectedKey(key);
+      if (typeof key === "string") openCard(key);
     });
     map.on("click", LYR.clusters, (e) => {
       const feature = clicked(e.features?.[0]);
@@ -972,7 +1045,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       const hits = map.queryRenderedFeatures(e.point, {
         layers: [LYR.point, LYR.clusters].filter((id) => map.getLayer(id)),
       });
-      if (hits.length === 0) setSelectedKey(null);
+      if (hits.length === 0) closeCard();
     });
     for (const id of [LYR.point, LYR.clusters]) {
       map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
@@ -1065,7 +1138,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   // Opening a job from a toast (or from a card that's already open) brings the
   // map to it rather than leaving you to find the ring.
   const focusJob = useCallback((key: string) => {
-    setSelectedKey(key);
+    openCard(key);
     const map = mapRef.current;
     const target = placedRef.current.get(key);
     if (!map || !target) return;
@@ -1262,36 +1335,37 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
             </div>
           </div>
 
-          {/* The bottom-left corner, which is where anything about one
-              particular job goes: a job that has just been paged announcing
-              itself, and the card for whichever job is open. They stack, newest
-              announcement on top, so one never lands on the other. */}
-          {(toasts.length > 0 || selected) && (
-            <div className="map-bottom">
-              {toasts.length > 0 && (
-                <div className="map-toasts" role="status" aria-live="polite">
-                  {toasts.map((toast) => (
-                    <button
-                      key={`${toast.key}-${toast.at}`}
-                      type="button"
-                      className="map-toast"
-                      title="Show this job on the map"
-                      onClick={() => focusJob(toast.key)}
-                    >
-                      <span className="map-toast-tag">NEW</span>
-                      <span className="map-toast-text">
-                        {toast.label}
-                        {toast.place && <span className="dim"> · {toast.place}</span>}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {selected && (
-                <JobCard placed={selected} now={now} onClose={() => setSelectedKey(null)} />
-              )}
+          {/* A job that has just been paged says so across the top, where it
+              can't be missed, and opens its own card below. Tapping the banner
+              takes the map to it. */}
+          {toasts.length > 0 && (
+            <div className="map-toasts" role="status" aria-live="polite">
+              {toasts.map((toast) => (
+                <button
+                  key={`${toast.key}-${toast.at}`}
+                  type="button"
+                  className="map-toast"
+                  title="Show this job on the map"
+                  onClick={() => focusJob(toast.key)}
+                >
+                  <span className="map-toast-tag">NEW</span>
+                  <span className="map-toast-text">
+                    {toast.label}
+                    {toast.place && <span className="dim"> · {toast.place}</span>}
+                  </span>
+                </button>
+              ))}
             </div>
+          )}
+
+          {selected && (
+            <JobCard
+              placed={selected}
+              now={now}
+              auto={autoCard}
+              onKeep={keepCard}
+              onClose={closeCard}
+            />
           )}
         </>
         )}
