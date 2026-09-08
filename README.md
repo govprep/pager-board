@@ -500,7 +500,9 @@ The rest of it:
   everything currently on the map.
 - Tapping a marker opens a card: type, time, where, the resources paged, a link
   into the platform's maps app, and **Full details**, which opens that job's
-  full card back on the board.
+  full card back on the board. A resource added to a job while its card is open
+  blinks blue on the card, the same three blinks the board's badges give — on
+  this app that blue means "this is new", wherever it appears.
 
 On a phone the controls are two rows of glass pills over the top of the map and
 the card becomes a sheet at the bottom, so the map itself keeps the screen.

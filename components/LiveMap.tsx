@@ -65,6 +65,22 @@ const PULSE_MS = 120_000;
 // vanishing — the CSS animations in globals.css are timed against these.
 const TOAST_MS = 20_000;
 const CARD_AUTO_MS = 20_000;
+// How long a resource that has just joined a job flashes on its card: three
+// 1.12s blinks, in step with the `unit-added-pulse` animation in globals.css
+// that the board's badges use. Same idiom in both places — on this app, that
+// blue means "this is new".
+const FLASH_MS = 3360;
+
+// One flashing badge, keyed by the job and the resource together. A job key
+// never contains a space (it's an incident number), so it can't collide with a
+// resource name that does ("428 QUEANBEYAN").
+function unitFlashKey(jobKey: string, unit: string): string {
+  return `${jobKey} ${unit}`;
+}
+
+// The usual case is nothing flashing; one shared empty set keeps that from
+// handing the card a new object on every render.
+const EMPTY_SET: ReadonlySet<string> = new Set<string>();
 
 const STORE = {
   window: "belterhub.map.window",
@@ -282,12 +298,15 @@ function JobCard({
   placed,
   now,
   auto,
+  joined,
   onKeep,
   onClose,
 }: {
   placed: Placed;
   now: number;
   auto: boolean;
+  /** Resources that have just been added to this job — they blink blue. */
+  joined: ReadonlySet<string>;
   onKeep: () => void;
   onClose: () => void;
 }) {
@@ -365,7 +384,17 @@ function JobCard({
         {units.length > 0 && (
           <div className="cs-cell">
             {units.map((u) => (
-              <span key={u.name} className={`badge${u.stopped ? " stopped" : ""}`}>
+              <span
+                key={u.name}
+                className={`badge${u.stopped ? " stopped" : ""}${joined.has(u.name) ? " added" : ""}`}
+                title={
+                  u.stopped
+                    ? "Stood down — stand-down received for this resource"
+                    : joined.has(u.name)
+                      ? "Just added to this incident"
+                      : undefined
+                }
+              >
                 {u.name}
               </span>
             ))}
@@ -423,6 +452,9 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   // Jobs that arrived while this map has been open, and when. Drives the pulse
   // ring and nothing else — the toast keeps its own list so it can be dismissed.
   const [freshKeys, setFreshKeys] = useState<Map<string, number>>(() => new Map());
+  // Resources that have just joined a job already on the map, as {job, resource}
+  // keys. Drives the blue blink on the card's badges.
+  const [joinedUnits, setJoinedUnits] = useState<Set<string>>(() => new Set());
 
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -432,7 +464,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     features: [],
   });
   const loadSequence = useRef(0);
-  const seenRef = useRef<Set<string> | null>(null);
+  // Each job's resources as the last pass saw them — the baseline for both
+  // "this job is new" and "this resource just joined it".
+  const seenRef = useRef<Map<string, Set<string>> | null>(null);
+  const joinTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const fittedRef = useRef(false);
   const soundRef = useRef(false);
   // `getToken` is a fresh closure on every render of the gate above us, and the
@@ -721,10 +756,42 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     // announced itself, and a refresh always "found" the last few calls.
     if (loading) return;
 
-    const keys = new Set(entries.map((e) => e.key));
+    // What each job had last pass, so both kinds of change can be read off one
+    // comparison: a job that wasn't there at all, and a resource joining one
+    // that was.
+    const next = new Map(entries.map((e) => [e.key, new Set(e.units.map((u) => u.name))]));
     const before = seenRef.current;
-    seenRef.current = keys;
+    seenRef.current = next;
     if (!before) return; // first loaded pass: the whole window would ring at once
+
+    // A resource added to a job already on the map. Not a job we've only just
+    // seen — every resource on that is new, and the job itself is the news.
+    // Marked per {job, resource}, the same key the board uses, and flashed the
+    // same blue on the card's badge (globals.css, `.badge.added`).
+    const joined: string[] = [];
+    for (const e of entries) {
+      const had = before.get(e.key);
+      if (!had) continue;
+      for (const u of e.units) if (!had.has(u.name)) joined.push(unitFlashKey(e.key, u.name));
+    }
+    if (joined.length > 0) {
+      setJoinedUnits((held) => new Set([...held, ...joined]));
+      for (const key of joined) {
+        const timers = joinTimersRef.current;
+        clearTimeout(timers.get(key));
+        // Dropped on a timer rather than on animationend, so it still clears for
+        // someone whose reduced-motion setting has turned the animation off.
+        timers.set(key, setTimeout(() => {
+          timers.delete(key);
+          setJoinedUnits((held) => {
+            if (!held.has(key)) return held;
+            const rest = new Set(held);
+            rest.delete(key);
+            return rest;
+          });
+        }, FLASH_MS));
+      }
+    }
 
     const cutoff = Date.now() - NEW_JOB_MAX_AGE_MS;
     const arrived = entries.filter(
@@ -760,6 +827,12 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     const newest = arrived[0];
     if (newest && (!selectedRef.current || autoCardRef.current)) openCard(newest.key, true);
   }, [entries, loading, openCard]);
+
+  // Badge timers outlive a refresh but must not outlive the map.
+  useEffect(() => {
+    const timers = joinTimersRef.current;
+    return () => { for (const t of timers.values()) clearTimeout(t); };
+  }, []);
 
   // Retire the pulse and the toasts on their own clocks.
   useEffect(() => {
@@ -1201,6 +1274,16 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   }, [incidents]);
 
+  // The flashing badges belong to one job, so the card is handed bare resource
+  // names rather than the whole {job, resource} set.
+  const joinedForSelected = useMemo(() => {
+    if (!selectedKey || joinedUnits.size === 0) return EMPTY_SET;
+    const prefix = `${selectedKey} `;
+    return new Set(
+      [...joinedUnits].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)),
+    );
+  }, [joinedUnits, selectedKey]);
+
   const approximate = placed.filter((p) => p.precision !== "exact").length;
   const unplaced = entries.length - placed.length;
 
@@ -1366,6 +1449,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
               placed={selected}
               now={now}
               auto={autoCard}
+              joined={joinedForSelected}
               onKeep={keepCard}
               onClose={closeCard}
             />
