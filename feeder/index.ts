@@ -16,6 +16,9 @@
  *                   back on: Cloudflare 403s this host's IP, so its socket goes
  *                   out through a residential connection instead.
  *   TG_SESSION    → Telegram group (also needs TG_API_ID, TG_API_HASH, TG_GROUP)
+ *   TFNSW_API_KEY → Live Traffic NSW hazards. Not pager traffic and not the
+ *                   board: these write to `hazards` through their own writer,
+ *                   which has no Slack and no push in it. See lib/hazards.ts.
  */
 
 // Load .env.local so this script shares the same config as the Next.js app.
@@ -42,10 +45,12 @@ function loadEnvLocal() {
 loadEnvLocal();
 
 import { makeWriter } from "./poster";
+import { makeHazardWriter } from "./hazard-poster";
 import { pollPagerMon } from "./sources/pagermon";
 import { pollRfsPager } from "./sources/rfspager";
 import { pollPublicPagerMons } from "./sources/public-pagermon";
 import { pollTelegram } from "./sources/telegram";
+import { pollLiveTraffic } from "./sources/livetraffic";
 
 (async () => {
   const { post } = makeWriter();
@@ -56,4 +61,8 @@ import { pollTelegram } from "./sources/telegram";
   pollRfsPager(post);
   pollPublicPagerMons(post);
   pollTelegram(post);
+
+  // Hazards run alongside the pager sources but share nothing with them — a
+  // separate writer, a separate table, and no path to a phone.
+  pollLiveTraffic(makeHazardWriter().post);
 })();

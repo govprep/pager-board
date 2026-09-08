@@ -65,6 +65,10 @@ saw it.
 | pager-feed.net | PagerMon Socket.IO, live | yes |
 | Telegram group (`TG_SESSION`) | MTProto, live | yes |
 
+Road hazards come in alongside, on their own path: Live Traffic NSW
+(`TFNSW_API_KEY`) writes to `hazards` rather than the board, and never to a
+phone. See `docs/hazards.md`.
+
 The three public instances are all PagerMon, so they share one table of hosts
 (`feeder/sources/public-pagermon.ts`). Adding an instance is a line in that
 table; dropping one is deleting the line. Two of them are read over the live
