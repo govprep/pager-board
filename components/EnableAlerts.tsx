@@ -154,7 +154,12 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
           title="Phone alerts are on — tap to choose which areas you're alerted for"
           onClick={() => setShowPrefs(true)}
         >
-          🔔 Alerts on
+          {/* A phone header has no room for three worded buttons beside the
+              logo, so each one carries an icon the narrow layout shows instead.
+              The bell wears a dot while alerts are on — same glyph as the offer
+              below it, so the dot is what says which state you're in. */}
+          <Bell dot />
+          <span className="btn-label">🔔 Alerts on</span>
         </button>
         {showPrefs && (
           <AlertPrefsModal lgaOptions={lgaOptions} onClose={() => setShowPrefs(false)} />
@@ -172,7 +177,23 @@ export default function EnableAlerts({ lgaOptions = [] }: { lgaOptions?: LgaOpti
 
   return (
     <button className="alerts-btn" onClick={enable}>
-      🔔 {state === "error" ? "Retry alerts" : "Enable alerts"}
+      <Bell />
+      <span className="btn-label">
+        🔔 {state === "error" ? "Retry alerts" : "Enable alerts"}
+      </span>
     </button>
+  );
+}
+
+// The topbar's icon for this control, shown in place of the words once the
+// header is narrow enough that the words don't fit (see .btn-icon).
+function Bell({ dot = false }: { dot?: boolean }) {
+  return (
+    <svg className="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+      {dot && <circle cx="18" cy="5" r="3" fill="currentColor" stroke="none" />}
+    </svg>
   );
 }

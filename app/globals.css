@@ -163,6 +163,11 @@ button:active, .map-link:active, .chip:active { opacity: 0.62; }
 
 .topbar-spacer { flex: 1; }
 
+/* Worded controls above 700px, icons below it — see the phone block at the end
+   of this file. Both are rendered; the breakpoint picks which one shows. */
+.btn-icon { display: none; }
+.topbar-break { display: none; }
+
 .search {
   display: flex;
   align-items: center;
@@ -1429,10 +1434,21 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
    iPad Slide Over, and folded-open phones, all of which read better as cards.
    Landscape phones (740px+) are comfortably above it and keep the table. */
 @media (max-width: 700px) {
-  /* Topbar: wrap so the search drops onto its own full-width row.
-     Otherwise the alerts button + clock leave no room and both the
-     search and the button get squashed on narrow phones. The spacer
-     stays visible to push the alerts/clock to the right of row 1. */
+  /* Topbar, two deliberate rows:
+
+       [logo] ..................... [raw] [alerts] [sign out]
+       [search ...............................] ● 14:23:07
+
+     Rows 1 and 2 are separated by .topbar-break, a zero-height item the width
+     of the header. That break is the whole mechanism: a wrapped flex row breaks
+     on width alone, and `order` sorts items without ever starting a new line, so
+     the old rule's "order: 1 forces a wrap" didn't. Sign out spilled into the
+     search's row instead, and the clock — whose turn came after a search still
+     measured at its full content width — landed on a row of its own.
+
+     Row 1 fits because the three controls drop their words for icons below;
+     row 1 is the row that runs out of width first, and it's the words that cost
+     it. */
   .topbar {
     flex-wrap: wrap;
     min-height: 0;
@@ -1441,11 +1457,25 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
       max(12px, env(safe-area-inset-right, 0px))
       8px
       max(12px, env(safe-area-inset-left, 0px));
-    gap: 8px;
+    /* Half the row gap, because the break below sits on a line of its own and
+       so collects that gap twice: 4 + 0 + 4 is the 8px the two rows want. */
+    gap: 4px 8px;
   }
+  .topbar-break {
+    display: block;
+    order: 1;
+    flex: 0 0 100%;
+    height: 0;
+  }
+  /* The logo is already the height of a control here — its desktop padding is
+     what made row 1 the taller of the two. */
+  .brand { padding: 0; }
+  /* Row 2. */
+  .search,
+  .live,
+  .clock { order: 2; }
   .search {
-    order: 1;        /* sorts after row-1 items, forcing a wrap */
-    flex: 1 1 auto;  /* shares row 2 with the clock, shrinking as needed */
+    flex: 1 1 0;     /* 0, not auto: the field must never be what breaks a row */
     width: auto;
     min-width: 0;
     height: 38px;    /* a thumb target, not a pointer one */
@@ -1454,25 +1484,62 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
      stays at its smaller size — it's a label, not something being typed into. */
   .search input { font-size: 16px; }
 
-  /* Everything in the header is tapped rather than clicked here. */
+  /* Everything in the header is tapped rather than clicked here, and the three
+     row-1 controls are squares carrying their icon: 38px of button either way,
+     spent on a target rather than on a word. */
   .raw-btn,
   .back-btn,
   .signout-btn,
-  .alerts-btn { height: 38px; }
+  .alerts-btn,
+  .alerts-on { height: 38px; }
+  .raw-btn,
+  .signout-btn,
+  .alerts-btn,
+  .alerts-on {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    padding: 0;
+  }
+  .alerts-on { border: 1px solid var(--border-2); border-radius: 6px; }
+  .btn-icon { display: block; width: 17px; height: 17px; }
+  /* Clipped, not hidden: these labels are still the buttons' accessible names,
+     and a screen reader has no use for the icon that replaced them. */
+  .raw-btn .btn-label,
+  .signout-btn .btn-label,
+  .alerts-btn .btn-label,
+  .alerts-on .btn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* The install prompt and the blocked notice are sentences, not controls —
+     there's no icon that says either of them. Give them the full width of a row
+     of their own, below the search, where they can be read. */
+  .alerts-hint {
+    order: 3;
+    flex: 0 0 100%;
+    margin-top: 4px;
+    white-space: normal;
+  }
   .search-clear { min-width: 30px; padding: 0 6px; font-size: 18px; }
   /* The row opens the card too, but the number stays the deliberate target. */
   .inc-link { padding: 3px 0; }
 
   /* Dot only — the word is the first thing to go when the header is two rows
      deep, and the colour is the part that carries the meaning. */
-  .live { order: 1; }
   .live-label { display: none; }
-  /* Clock joins the search on row 2, pinned to the right. Drop the desktop
-     `height:100%`: in a wrapped flex header that resolves against the full
-     multi-row height (iOS WebKit), ballooning the clock and pushing the
-     search row down over the first incident card. */
+  /* Clock sits at the right of row 2, after a search that takes what's left.
+     Drop the desktop `align-self: stretch`: in a wrapped flex header that
+     resolves against the full multi-row height (iOS WebKit), ballooning the
+     clock and pushing the search row down over the first incident card. */
   .clock {
-    order: 1;
+    align-self: center;
     height: 32px;
     font-size: 13px;
     padding-left: 12px;

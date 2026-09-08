@@ -271,6 +271,11 @@ export default function RawFeed({ getToken }: { getToken: () => string | null })
           <span className="raw-readout-l">{hasMore ? "loaded" : "messages"}</span>
         </div>
 
+        {/* Same phone break as the board's header: the search takes a row of
+            its own under the title and the count, rather than being squeezed
+            into whatever width they leave. */}
+        <div className="topbar-break" aria-hidden="true" />
+
         <label className="search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
             strokeLinecap="round" strokeLinejoin="round">

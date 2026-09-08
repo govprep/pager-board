@@ -1117,7 +1117,14 @@ export default function PagerBoard({
           href="/raw"
           title="Every pager line as it came over the air — including what the board filters out"
         >
-          Raw feed
+          {/* Icon for the phone, words for the pointer. The label isn't dropped
+              when the icon takes over — it's clipped, so it stays the button's
+              accessible name. */}
+          <svg className="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="4 7 8 12 4 17" /><line x1="12" y1="17" x2="20" y2="17" />
+          </svg>
+          <span className="btn-label">Raw feed</span>
         </Link>
 
         <EnableAlerts lgaOptions={lgaOptions} />
@@ -1127,8 +1134,18 @@ export default function PagerBoard({
           title="Forget this device — you'll need your invite link again"
           onClick={onSignOut}
         >
-          Sign out
+          <svg className="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M18.36 6.64a9 9 0 1 1-12.72 0" /><line x1="12" y1="2" x2="12" y2="12" />
+          </svg>
+          <span className="btn-label">Sign out</span>
         </button>
+
+        {/* Where the phone header breaks. A wrapped flex row breaks on width
+            alone — `order` sorts items but never starts a new line — so without
+            a full-width item here the controls above spilled into the search's
+            row and pushed the clock onto a row of its own. */}
+        <div className="topbar-break" aria-hidden="true" />
 
         <LiveDot state={live} />
         <Clock />
