@@ -22,7 +22,9 @@ export type Placement =
   | { precision: "exact"; coords: Coords }
   /** A FRNSW job placed on the responding station's suburb. Generic by nature. */
   | { precision: "station"; query: string; types: string; label: string }
-  /** An address with no coordinates on it, to be looked up as written. */
+  /** No coordinates, but the address names a suburb. Generic, and temporary:
+      an RFS job's later pages usually do carry coordinates, and the pin moves
+      to them when they land. */
   | { precision: "address"; query: string; types: string; label: string }
   /** Nothing on the page says where it is. */
   | { precision: "none" };
@@ -37,9 +39,9 @@ export interface MappableJob {
   raw: string;
 }
 
-// The state parenthetical the RFS addresses carry ("YASS VALLEY (NSW)"). It is
-// an LGA marker rather than part of the place name, and geocoders read it as
-// noise at best.
+// The state parenthetical the RFS addresses carry ("YASS VALLEY (NSW)"). It
+// marks the LGA segment, which is what makes the segment in front of it the
+// suburb — see suburbOf() below.
 const STATE_SEGMENT_RE = /\s*\((?:NSW|ACT|VIC|QLD|SA|NT|TAS|WA|LGA)\)/gi;
 
 // Suburb-and-town level. Without this a station called PENRITH can resolve to a
@@ -70,33 +72,78 @@ export function stationSuburb(job: MappableJob): string | null {
   return null;
 }
 
-/** Search text for an address that arrived without coordinates. */
-export function addressQuery(location: string): string {
-  return location
-    .replace(STATE_SEGMENT_RE, "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join(", ");
+// Street-type words. A segment ending in one of these is a road, not a suburb —
+// the guard for an address that never carried a suburb at all.
+const STREET_SUFFIX_RE =
+  /\b(?:ST|STREET|RD|ROAD|AVE?|AVENUE|HWY|HIGHWAY|DR|DRIVE|LANE|LN|PDE|PARADE|CRES|CRESCENT|CL|CLOSE|CT|COURT|PL|PLACE|WAY|TCE|TERRACE|CIR|CIRCUIT|GR|GROVE|TRL|TRACK|FIRE\s+TRAIL)\.?$/i;
+
+/**
+ * The suburb an RFS address is in, and its postcode.
+ *
+ * **Not** the street. This is the whole lesson of the first version, which
+ * handed the address text to a geocoder as written and put jobs hundreds of
+ * kilometres from where they were. These addresses are not written for a
+ * geocoder:
+ *
+ *   MITCHELL HIGHWAY, BACK SWAMP ROAD, THE ROCKS            (a cross-street)
+ *   AFA0071631,UR-3R WASTE MNGT FACILITY,WALLGROVE RD,…     (alarm no. + premises)
+ *   CESSNOCK RD,DAVID ST,NEATH,CESSNOCK CITY (NSW),2326     (two road names)
+ *   INCIDENT CA A&50Y$3#A(i                                 (a failed decode)
+ *
+ * Asked to place any of those, a geocoder answers *something* — "THE ROCKS"
+ * being the one in Sydney rather than the one out past Bathurst. A wrong pin is
+ * worse than no pin on a map people use to know where a job is.
+ *
+ * So the suburb is taken structurally rather than guessed at: these addresses
+ * end `…,SUBURB,LGA (NSW),POSTCODE`, so the suburb is the segment in front of
+ * the LGA marker, whatever the mess in front of it. No marker, no suburb, no
+ * pin — the job waits for a page carrying coordinates, which for RFS traffic
+ * usually follows within a few minutes.
+ */
+export function suburbOf(location: string): { suburb: string; postcode: string | null } | null {
+  const parts = (location ?? "").split(",").map((p) => p.trim());
+  const lga = parts.findIndex((p) => STATE_SEGMENT_RE.test(p));
+  // findIndex over a /g regex: reset it, or the next call resumes mid-string.
+  STATE_SEGMENT_RE.lastIndex = 0;
+  if (lga < 1) return null;
+
+  const suburb = parts[lga - 1].replace(/[^A-Za-z' -]+/g, " ").replace(/\s+/g, " ").trim();
+  if (suburb.length < 2 || STREET_SUFFIX_RE.test(suburb)) return null;
+
+  // The postcode is the strongest disambiguator these addresses carry, and a
+  // fair number arrive with a truncated coords fragment stuck to it
+  // ("2766 - [150."), so it's matched rather than taken whole.
+  const postcode = parts.slice(lga + 1).join(" ").match(/\b(\d{4})\b/)?.[1] ?? null;
+  return { suburb: suburb.toUpperCase(), postcode };
+}
+
+/** Search text for a suburb — with its postcode when the page carried one. */
+export function suburbQuery(suburb: string, postcode: string | null): string {
+  return postcode ? `${suburb}, NSW ${postcode}` : `${suburb}, NSW`;
 }
 
 /** Where to put this job, and how precisely we can claim to know. */
 export function placeJob(job: MappableJob): Placement {
   if (job.coords) return { precision: "exact", coords: job.coords };
 
-  const suburb = stationSuburb(job);
-  if (suburb) {
+  const station = stationSuburb(job);
+  if (station) {
     return {
       precision: "station",
-      query: `${suburb}, NSW`,
+      query: suburbQuery(station, null),
       types: PLACE_TYPES,
-      label: suburb,
+      label: station,
     };
   }
 
-  const query = addressQuery(job.location);
-  if (query) {
-    return { precision: "address", query, types: "", label: query };
+  const found = suburbOf(job.location);
+  if (found) {
+    return {
+      precision: "address",
+      query: suburbQuery(found.suburb, found.postcode),
+      types: PLACE_TYPES,
+      label: found.suburb,
+    };
   }
 
   return { precision: "none" };

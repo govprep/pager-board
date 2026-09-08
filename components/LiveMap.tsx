@@ -341,21 +341,24 @@ function JobCard({
           <span className="dim">· paged {relativeAge(inc.receivedAt, now)} ago</span>
         </div>
 
+        {/* The address, when the page carried one, is shown whether or not it
+            is what the pin was placed by — it's the most precise thing anyone
+            has. What the *pin* is worth is said underneath it. */}
         <div className="map-card-where">
-          {precision === "exact" ? (
+          {inc.location ? (
             <>
               <span className="street">{street || inc.location}</span>
               {locality && <span className="locality">{locality}</span>}
             </>
           ) : (
-            <>
-              <span className="street">{place}</span>
-              <span className="locality">
-                {precision === "station"
-                  ? "Approximate — this page carried no address, so it sits on the responding station's suburb."
-                  : "Approximate — looked up from the address text, which carried no coordinates."}
-              </span>
-            </>
+            <span className="street">{place}</span>
+          )}
+          {precision !== "exact" && (
+            <span className="map-card-approx">
+              {precision === "station"
+                ? `Approximate — this page carried no address, so the pin is on ${place}, the responding station's suburb.`
+                : `Approximate — this page carried no coordinates, so the pin is on ${place}. It moves as soon as a page carrying them arrives.`}
+            </span>
           )}
         </div>
 

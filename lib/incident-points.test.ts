@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addressQuery, placeJob, stationSuburb } from "./incident-points";
+import { placeJob, stationSuburb, suburbOf } from "./incident-points";
 import { frnswStationName } from "./frnsw-stations";
 
 const job = (over: Partial<Parameters<typeof placeJob>[0]> = {}) => ({
@@ -43,16 +43,52 @@ test("the dash layout FRNSW pages arrive in resolves too", () => {
   );
 });
 
-test("an RFS page with an address but no coordinates is looked up as written", () => {
+test("an RFS page with an address but no coordinates is placed on its suburb", () => {
   const placed = placeJob(job({ location: "15 GREYLEIGH DR,KIAMA,KIAMA (NSW),2533" }));
   assert.equal(placed.precision, "address");
-  assert.equal(placed.precision === "address" ? placed.query : "", "15 GREYLEIGH DR, KIAMA, KIAMA, 2533");
+  // The suburb and its postcode — never the street, which these addresses do
+  // not write in a way any geocoder can read.
+  assert.equal(placed.precision === "address" ? placed.query : "", "KIAMA, NSW 2533");
+});
+
+test("the suburb is the segment in front of the LGA, however many roads precede it", () => {
+  assert.deepEqual(
+    suburbOf("CESSNOCK RD,DAVID ST,NEATH,CESSNOCK CITY (NSW),2326"),
+    { suburb: "NEATH", postcode: "2326" },
+  );
+  assert.deepEqual(
+    suburbOf("AFA0071631,UR-3R WASTE MNGT FACILITY,WALLGROVE RD,EASTERN CREEK,BLACKTOWN CITY (NSW),2766"),
+    { suburb: "EASTERN CREEK", postcode: "2766" },
+  );
+});
+
+test("a truncated coords fragment stuck to the postcode doesn't reach the query", () => {
+  assert.deepEqual(
+    suburbOf("WALLGROVE RD,EASTERN CREEK,BLACKTOWN CITY (NSW),2766 - [150."),
+    { suburb: "EASTERN CREEK", postcode: "2766" },
+  );
+});
+
+test("an address with no LGA marker is left off the map rather than guessed at", () => {
+  // "THE ROCKS" here is out past Bathurst. Handed to a geocoder it comes back
+  // as the one in Sydney, 200km away — the failure this rule exists to stop.
+  assert.equal(suburbOf("MITCHELL HIGHWAY, BACK SWAMP ROAD, THE ROCKS"), null);
+  assert.equal(placeJob(job({ location: "MITCHELL HIGHWAY, BACK SWAMP ROAD, THE ROCKS" })).precision, "none");
+});
+
+test("a decode that lost the address is never placed", () => {
+  assert.equal(placeJob(job({ location: "INCIDENT CA A&50Y$3#A(i" })).precision, "none");
+});
+
+test("a road where the suburb should be is not a suburb", () => {
+  assert.equal(suburbOf("SOMEWHERE,MITCHELL HIGHWAY,BATHURST REGIONAL (NSW),2795"), null);
 });
 
 test("a page that says nothing about where it is has no placement", () => {
   assert.equal(placeJob(job({ units: ["LHBENWE9"] })).precision, "none");
 });
 
-test("the state parenthetical is dropped from an address lookup", () => {
-  assert.equal(addressQuery("SUTTON RD,SUTTON,YASS VALLEY (NSW),2620"), "SUTTON RD, SUTTON, YASS VALLEY, 2620");
+test("the postcode joins the suburb, since it is what tells two of them apart", () => {
+  const placed = placeJob(job({ location: "SUTTON RD,SUTTON,YASS VALLEY (NSW),2620" }));
+  assert.equal(placed.precision === "address" ? placed.query : "", "SUTTON, NSW 2620");
 });

@@ -14,8 +14,23 @@ import type { Coords } from "./types";
 // to the foreground — for names that do not move. Answers are kept for 30 days,
 // which is the longest Mapbox's terms allow a temporary geocode to be held.
 
-const CACHE_KEY = "belterhub.geocode.v1";
+// Bumped when the questions change, not just the answers: v1 asked for street
+// addresses, unbounded, and every device that ran it is holding answers that
+// were wrong in ways a later fix can't reach. A new key retires them.
+const CACHE_KEY = "belterhub.geocode.v2";
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// NSW and the ACT, which is the whole of what this feed pages to. Every lookup
+// is bounded by it — a hard floor under the guessing, because the alternative
+// to a bounded miss is a confident answer a thousand kilometres away: place
+// names repeat across Australia, and the pager addresses these come from are
+// terse enough to match the wrong one.
+//
+// Applied to every request rather than offered as an option, because the cache
+// above is keyed on the query alone: one box for all callers is what keeps a
+// cached answer meaning the same thing as a fresh one.
+// west, south, east, north.
+const BBOX = "140.99,-37.51,153.70,-28.15";
 
 type Entry = { lng: number; lat: number; at: number };
 
@@ -102,7 +117,7 @@ export async function forwardGeocode(
     try {
       const url =
         `https://api.mapbox.com/search/geocode/v6/forward` +
-        `?q=${encodeURIComponent(query)}&country=au&limit=1` +
+        `?q=${encodeURIComponent(query)}&country=au&bbox=${BBOX}&limit=1` +
         (types ? `&types=${encodeURIComponent(types)}` : "") +
         `&access_token=${token}`;
       const res = await fetch(url, { signal });

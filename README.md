@@ -432,7 +432,22 @@ draws from.
 |---|---|---|
 | exact | coordinates on the page itself | filled dot, hard white edge |
 | station | FRNSW: the responding station's suburb | faded dot inside a soft ring |
-| address | an address that carried no coordinates | faded dot inside a soft ring |
+| address | the suburb named in an address that carried no coordinates | faded dot inside a soft ring |
+| — | nothing that identifies a suburb: left off the map | — |
+
+**A pin is never placed from street text.** These addresses are not written for
+a geocoder — `MITCHELL HIGHWAY, BACK SWAMP ROAD, THE ROCKS` is a cross-street,
+`AFA0071631,UR-3R WASTE MNGT FACILITY,WALLGROVE RD,…` opens with an alarm
+number and a premises name, and a bad decode can leave `INCIDENT CA A&50Y$3#A(i`
+in the field. Asked to place any of those a geocoder answers *something*, and
+"THE ROCKS" comes back as the one in Sydney rather than the one out past
+Bathurst. So the suburb is taken structurally instead: these addresses end
+`…,SUBURB,LGA (NSW),POSTCODE`, so it is the segment in front of the LGA marker,
+and it is looked up as `SUBURB, NSW POSTCODE`. No marker, no pin — the job waits
+for a page carrying coordinates, which for RFS traffic usually follows within
+minutes, and the pin lands on them the moment it does. Every lookup is also
+bounded to a NSW/ACT box, so a miss stays a miss rather than becoming a
+confident answer in Western Australia.
 
 FRNSW is why the other two grades exist. A FRNSW page is
 `FRINC TYPE: AFA TURNOUT: 66 INC: 156572` — no address, no coordinates, only the
