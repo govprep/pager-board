@@ -1701,19 +1701,28 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   color: #04070f;
 }
 
+/* The bottom-left stack: announcements of jobs just paged, and the card for the
+   job that's open, in one column. They are the same subject — one job — and
+   sharing a corner is what stops one covering the other. */
+.map-bottom {
+  position: absolute;
+  z-index: 5;
+  left: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: min(360px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+
 /* A job arriving says so here, and tapping it takes the map to it. Same blue as
    the board's arrival flash, for the same reason: on this app, that colour means
    "this is new". */
 .map-toasts {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 4;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: min(400px, calc(100% - 220px));
 }
 .map-toast {
   display: flex;
@@ -1727,7 +1736,11 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   border: 1px solid #60a5fa;
   color: #eff6ff;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  animation: map-toast-in 220ms ease-out;
+  /* In quickly, then out on its own just before the component drops it — the
+     19.3s + 700ms has to stay in step with TOAST_MS in LiveMap.tsx, which is
+     what actually removes it. Doing the fade in CSS keeps the 20 seconds a
+     single timer rather than a second one racing it. */
+  animation: map-toast-in 220ms ease-out, map-toast-out 700ms ease-in 19.3s forwards;
 }
 .map-toast-tag {
   flex: none;
@@ -1748,8 +1761,12 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
 }
 .map-toast .dim { color: rgba(219, 234, 254, 0.72); }
 @keyframes map-toast-in {
-  from { opacity: 0; transform: translateY(-8px); }
+  from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
+}
+@keyframes map-toast-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 
 /* The key. Under the window picker on a pointer, where there is room for it to
@@ -1799,11 +1816,6 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
    another marker simply moves the card — so it takes the corner rather than the
    screen. On a phone it becomes a sheet at the bottom, under the thumb. */
 .map-card {
-  position: absolute;
-  z-index: 5;
-  left: 12px;
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  width: min(360px, calc(100% - 24px));
   background: var(--surface);
   border: 1px solid var(--border-2);
   border-radius: 12px;
@@ -1891,13 +1903,19 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   }
   .map-tool { min-width: 54px; height: 36px; }
 
-  .map-toasts {
-    top: 104px;
-    left: 10px;
-    right: 10px;
-    transform: none;
+  /* Full width, flush to the bottom, so the card below can be a sheet. The
+     announcements keep an inset — they are chips, not the sheet. */
+  .map-bottom {
+    left: 0;
+    right: 0;
+    bottom: 0;
     width: auto;
+    gap: 8px;
   }
+  .map-toasts { padding: 0 10px; }
+  /* With no card under them, the announcements are what sits above the
+     attribution — give them the room to clear it. */
+  .map-toasts:last-child { padding-bottom: 26px; }
 
   /* The key opens on demand rather than sitting over the map. */
   .map-legend { top: 58px; left: auto; right: 10px; }
@@ -1929,10 +1947,6 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   /* A sheet, not a card: full width, at the bottom, sized to its content up to
      about two thirds of the screen. */
   .map-card {
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: auto;
     max-height: 62dvh;
     overflow-y: auto;
     border-radius: 14px 14px 0 0;

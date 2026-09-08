@@ -455,14 +455,27 @@ The rest of it:
 - **Heat** — a heatmap weighted by recency, so a 24-hour window still shows
   where the last hour was rather than an even wash over the day. It fades out as
   the markers become individually readable.
-- **Clusters** — below street zoom, markers collapse into counted circles;
-  tapping one opens it.
-- **A new job announces itself** — a blue card at the top of the screen (tap it
-  and the map flies there), a ring pulsing on the marker for two minutes, and
-  optionally a chime (**♪**, off by default: the tap that turns it on is the
-  gesture browsers require before a page may make a noise). This is in-page and
-  only while the map is open — the push notifications in *Phone alerts* below
-  are the ones that reach a pocket.
+- **Clusters** — below street zoom, markers collapse into a dark chip with the
+  count on it, coloured by the worst thing the group *contains*: red if there's
+  a fire in there, orange if there's a rescue, otherwise pale. Zoomed out to the
+  whole state you can see where the fires are without opening anything. Tapping
+  one opens it.
+- **A new job announces itself** — a blue chip in the bottom-left corner for 20
+  seconds, then it fades (tap it and the map flies to the job), a ring pulsing
+  on the marker for two minutes, and optionally a chime (**♪**, off by default:
+  the tap that turns it on is the gesture browsers require before a page may
+  make a noise). The chip stacks above the open card, so the two never cover
+  each other. Nothing pans the map on its own — a map that jumps while you're
+  reading it is worse than one you have to tap.
+
+  A job only counts as new if this page has never held it *and* it was paged in
+  the last ten minutes, and the baseline is taken from the first loaded page
+  rather than the empty one before it. Without that second part, refreshing
+  announced the last few calls every time — which it did, on the map and on the
+  board both, until it didn't.
+
+  This is all in-page and only while the map is open; the push notifications in
+  *Phone alerts* below are the ones that reach a pocket.
 - **Sat** — satellite imagery instead of the dark basemap. **Fit** re-frames
   everything currently on the map.
 - Tapping a marker opens a card: type, time, where, the resources paged, a link

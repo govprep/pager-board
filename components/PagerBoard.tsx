@@ -971,6 +971,12 @@ export default function PagerBoard({
   // for a job already on the board, which is a page from an hour ago arriving,
   // not the job changing.
   useEffect(() => {
+    // Nothing has arrived yet, so there is no picture to remember. Without this
+    // the baseline is taken on the render *before* the first page lands — an
+    // empty board — and every job on that page then reads as one that has just
+    // been paged. Refreshing the board flashed the last few jobs every time.
+    if (loading) return;
+
     const next = new Map<string, Seen>();
     for (const { key, inc, units } of mergeEntries(incidents)) {
       next.set(key, {
@@ -1027,7 +1033,7 @@ export default function PagerBoard({
         });
       }, FLASH_MS));
     }
-  }, [incidents]);
+  }, [incidents, loading]);
 
   // Timers outlive a refresh but must not outlive the board.
   useEffect(() => {

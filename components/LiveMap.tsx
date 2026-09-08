@@ -97,6 +97,16 @@ const TYPE_COLOR: Record<string, string> = {
   default: "#94a3b8",
 };
 
+// What colour a cluster wears: the worst thing in it. `fires` and `rescues` are
+// counted by the source itself (clusterProperties, below) as the points are
+// grouped, so this costs nothing at draw time.
+const CLUSTER_TINT: mapboxgl.ExpressionSpecification = [
+  "case",
+  [">", ["get", "fires"], 0], TYPE_COLOR.fire,
+  [">", ["get", "rescues"], 0], TYPE_COLOR.rescue,
+  "#cbd5e1",
+];
+
 // The key, in the order it reads best: what you're most likely to be looking for
 // at the top.
 const LEGEND: { cls: string; label: string }[] = [
@@ -118,6 +128,7 @@ const LYR = {
   heat: "jobs-heat",
   approx: "jobs-approx",
   pulse: "jobs-pulse",
+  clusterGlow: "jobs-cluster-glow",
   clusters: "jobs-clusters",
   clusterCount: "jobs-cluster-count",
   point: "jobs-point",
@@ -187,6 +198,7 @@ function featureFor(placed: Placed, now: number, windowMs: number, fresh: boolea
     geometry: { type: "Point", coordinates: [point.lng, point.lat] },
     properties: {
       key: entry.key,
+      cls: typeClass(entry.inc.type),
       color: TYPE_COLOR[typeClass(entry.inc.type)] ?? TYPE_COLOR.default,
       precision,
       fresh,
@@ -631,14 +643,19 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   //
   // Every job on the map is compared against the pass before. One we've never
   // held, and that was paged in the last ten minutes, is news: it rings, it
-  // pulses, and it says so at the top of the screen. The ten minutes is what
-  // separates a job being paged from an older one arriving because the window
-  // was widened or a slow source caught up.
+  // pulses, and it says so in the corner. The ten minutes is what separates a
+  // job being paged from an older one arriving because the window was widened
+  // or a slow source caught up.
   useEffect(() => {
+    // Not until the first page has landed. The baseline was otherwise taken on
+    // the render before it — an empty map — so every recent job on that page
+    // announced itself, and a refresh always "found" the last few calls.
+    if (loading) return;
+
     const keys = new Set(entries.map((e) => e.key));
     const before = seenRef.current;
     seenRef.current = keys;
-    if (!before) return; // first pass: the whole window would ring at once
+    if (!before) return; // first loaded pass: the whole window would ring at once
 
     const cutoff = Date.now() - NEW_JOB_MAX_AGE_MS;
     const arrived = entries.filter(
@@ -666,7 +683,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       ].slice(0, 4),
     );
     if (soundRef.current) chimeRef.current?.();
-  }, [entries]);
+  }, [entries, loading]);
 
   // Retire the pulse and the toasts on their own clocks.
   useEffect(() => {
@@ -704,6 +721,11 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
         // looking at one town and want its jobs separately.
         clusterMaxZoom: 11,
         clusterRadius: 46,
+        // Rolled up as the points are grouped, for CLUSTER_TINT above.
+        clusterProperties: {
+          fires: ["+", ["case", ["==", ["get", "cls"], "fire"], 1, 0]],
+          rescues: ["+", ["case", ["==", ["get", "cls"], "rescue"], 1, 0]],
+        },
       });
     }
 
@@ -768,22 +790,35 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       });
     }
 
-    if (!map.getLayer(LYR.clusters)) {
+    // Clusters read as one of the board's own badges rather than as a coloured
+    // blob: a dark chip, a coloured edge, the count in that colour, and a soft
+    // glow of it behind. The colour is what the group *contains* — a fire
+    // anywhere in it makes it red — so zoomed out to the state you can see
+    // where the fires are without opening a single one. A plain count can only
+    // tell you where the traffic is, which the heat map already says better.
+    if (!map.getLayer(LYR.clusterGlow)) {
+      map.addLayer({
+        id: LYR.clusterGlow,
+        type: "circle",
+        source: SRC.clustered,
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-radius": ["step", ["get", "point_count"], 26, 5, 32, 15, 40],
+          "circle-color": CLUSTER_TINT,
+          "circle-opacity": 0.14,
+          "circle-blur": 0.45,
+        },
+      });
       map.addLayer({
         id: LYR.clusters,
         type: "circle",
         source: SRC.clustered,
         filter: ["has", "point_count"],
         paint: {
-          "circle-color": [
-            "step", ["get", "point_count"],
-            "rgba(56,189,248,0.85)", 5,
-            "rgba(250,204,21,0.85)", 15,
-            "rgba(239,68,68,0.88)",
-          ],
-          "circle-radius": ["step", ["get", "point_count"], 15, 5, 20, 15, 27],
+          "circle-radius": ["step", ["get", "point_count"], 15, 5, 19, 15, 24],
+          "circle-color": "rgba(10,10,12,0.93)",
           "circle-stroke-width": 2,
-          "circle-stroke-color": "rgba(10,10,10,0.75)",
+          "circle-stroke-color": CLUSTER_TINT,
         },
       });
       map.addLayer({
@@ -793,10 +828,11 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
         filter: ["has", "point_count"],
         layout: {
           "text-field": ["get", "point_count_abbreviated"],
-          "text-size": 12,
+          "text-size": ["step", ["get", "point_count"], 12, 15, 13],
           "text-allow-overlap": true,
+          "text-ignore-placement": true,
         },
-        paint: { "text-color": "#0a0a0a" },
+        paint: { "text-color": CLUSTER_TINT },
       });
     }
 
@@ -1197,26 +1233,6 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
             </button>
           </div>
 
-          {/* New jobs announce themselves here. Tapping one takes the map to it. */}
-          {toasts.length > 0 && (
-            <div className="map-toasts" role="status" aria-live="polite">
-              {toasts.map((toast) => (
-                <button
-                  key={`${toast.key}-${toast.at}`}
-                  type="button"
-                  className="map-toast"
-                  onClick={() => focusJob(toast.key)}
-                >
-                  <span className="map-toast-tag">NEW</span>
-                  <span className="map-toast-text">
-                    {toast.label}
-                    {toast.place && <span className="dim"> · {toast.place}</span>}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-
           <div className={`map-legend${legendOpen ? " open" : ""}`}>
             <button
               type="button"
@@ -1246,8 +1262,36 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
             </div>
           </div>
 
-          {selected && (
-            <JobCard placed={selected} now={now} onClose={() => setSelectedKey(null)} />
+          {/* The bottom-left corner, which is where anything about one
+              particular job goes: a job that has just been paged announcing
+              itself, and the card for whichever job is open. They stack, newest
+              announcement on top, so one never lands on the other. */}
+          {(toasts.length > 0 || selected) && (
+            <div className="map-bottom">
+              {toasts.length > 0 && (
+                <div className="map-toasts" role="status" aria-live="polite">
+                  {toasts.map((toast) => (
+                    <button
+                      key={`${toast.key}-${toast.at}`}
+                      type="button"
+                      className="map-toast"
+                      title="Show this job on the map"
+                      onClick={() => focusJob(toast.key)}
+                    >
+                      <span className="map-toast-tag">NEW</span>
+                      <span className="map-toast-text">
+                        {toast.label}
+                        {toast.place && <span className="dim"> · {toast.place}</span>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {selected && (
+                <JobCard placed={selected} now={now} onClose={() => setSelectedKey(null)} />
+              )}
+            </div>
           )}
         </>
         )}
