@@ -168,6 +168,18 @@ button:active, .map-link:active, .chip:active { opacity: 0.62; }
 .btn-icon { display: none; }
 .topbar-break { display: none; }
 
+/* The live dot and the clock are one readout, so they wrap as one. The board
+   and the raw feed keep them apart with an explicit row break; the map's header
+   has no search to break for, and fits on a single row down to ~380px, so there
+   it's this that stops a narrow phone stranding the clock below the dot. */
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  align-self: stretch;
+}
+
 .search {
   display: flex;
   align-items: center;
@@ -1468,8 +1480,11 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
     height: 0;
   }
   /* The logo is already the height of a control here — its desktop padding is
-     what made row 1 the taller of the two. */
+     what made row 1 the taller of the two. It also gives back the width the
+     fourth control (Map) needs: at 320px, a 38px logo leaves row 1 8px short
+     and Sign out drops to a row of its own. */
   .brand { padding: 0; }
+  .brand img { height: 32px; }
   /* Row 2. */
   .search,
   .live,
@@ -1534,6 +1549,11 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   /* Dot only — the word is the first thing to go when the header is two rows
      deep, and the colour is the part that carries the meaning. */
   .live-label { display: none; }
+  /* The map's header has no search to fill row 2 and push the status pair to
+     the right of it. This does that job wherever there's slack, and nothing
+     where the search has already taken it all. */
+  .live { margin-left: auto; }
+  .topbar-status .live { margin-left: 0; }
   /* Clock sits at the right of row 2, after a search that takes what's left.
      Drop the desktop `align-self: stretch`: in a wrapped flex header that
      resolves against the full multi-row height (iOS WebKit), ballooning the

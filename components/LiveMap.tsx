@@ -1302,8 +1302,12 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
 
         <EnableAlerts lgaOptions={lgaOptions} />
 
-        <LiveDot state={live} />
-        <Clock />
+        {/* One item, so a phone too narrow for a single row wraps the dot and
+            the clock together rather than splitting the readout. */}
+        <div className="topbar-status">
+          <LiveDot state={live} />
+          <Clock />
+        </div>
       </header>
 
       {feedError && (
