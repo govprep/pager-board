@@ -414,6 +414,67 @@ dedup key is a sha256 of the whitespace-normalised text — computed in
 `lib/raw-feed.ts` and, for the one-time backfill, in `supabase/schema.sql`. The
 two must stay in step or old rows stop deduplicating against new ones.
 
+## The live map (`/map`)
+
+Every job of the last few hours, where it happened. Reach it from the **Map**
+button in the board's header. It runs on the same Realtime socket the board
+does, so a page lands on both at the same moment.
+
+The window is 1 / 4 / 12 / 24 hours and defaults to four — a shift's worth of
+traffic — and the choice sticks to the device. A job is one marker, not one per
+appliance: the rows are reconciled by `lib/entries.ts`, the same code the board
+draws from.
+
+**Not every page says where it is.** Placement is decided in
+`lib/incident-points.ts`, in three grades, and the map draws each differently:
+
+| grade | where the position comes from | how it's drawn |
+|---|---|---|
+| exact | coordinates on the page itself | filled dot, hard white edge |
+| station | FRNSW: the responding station's suburb | faded dot inside a soft ring |
+| address | an address that carried no coordinates | faded dot inside a soft ring |
+
+FRNSW is why the other two grades exist. A FRNSW page is
+`FRINC TYPE: AFA TURNOUT: 66 INC: 156572` — no address, no coordinates, only the
+turnout number of the station that was sent — and that is most of the traffic.
+Dropping those would leave the map showing a fraction of what is happening, so
+they go on the station's suburb and say so three times over: in the key
+("Approximate"), in the marker (a ring rather than a pin), and in the card
+("this page carried no address, so it sits on the responding station's suburb").
+
+Jobs sharing a suburb are scattered by a couple of hundred metres — a hash of
+the job's own key, so it doesn't move between renders — because otherwise four
+jobs in Queanbeyan stack into one marker and the map understates the night.
+
+Suburb and address lookups are Mapbox forward-geocodes, cached in `localStorage`
+for 30 days (`lib/geocode.ts`): a suburb is asked about once, however many jobs
+land in it and however many times the map is opened.
+
+The rest of it:
+
+- **Heat** — a heatmap weighted by recency, so a 24-hour window still shows
+  where the last hour was rather than an even wash over the day. It fades out as
+  the markers become individually readable.
+- **Clusters** — below street zoom, markers collapse into counted circles;
+  tapping one opens it.
+- **A new job announces itself** — a blue card at the top of the screen (tap it
+  and the map flies there), a ring pulsing on the marker for two minutes, and
+  optionally a chime (**♪**, off by default: the tap that turns it on is the
+  gesture browsers require before a page may make a noise). This is in-page and
+  only while the map is open — the push notifications in *Phone alerts* below
+  are the ones that reach a pocket.
+- **Sat** — satellite imagery instead of the dark basemap. **Fit** re-frames
+  everything currently on the map.
+- Tapping a marker opens a card: type, time, where, the resources paged, a link
+  into the platform's maps app, and **Full details**, which opens that job's
+  full card back on the board.
+
+On a phone the controls are two rows of glass pills over the top of the map and
+the card becomes a sheet at the bottom, so the map itself keeps the screen.
+
+It needs `NEXT_PUBLIC_MAPBOX_TOKEN` — the same token the incident card's map
+already uses. Without one the page says so and points back at the board.
+
 ## Phone alerts: choosing your areas
 
 Tapping **🔔 Alerts on** in the header opens the area picker. A device either
@@ -520,18 +581,24 @@ wrapper, not a PWA.
 app/
   page.tsx              server component, renders the access gate
   raw/page.tsx          the raw feed, behind the same gate
+  map/page.tsx          the live map, behind the same gate
   api/incidents/route.ts GET (list) + POST (ingest raw lines)
   api/raw/route.ts      GET the raw feed (search + status filter, keyset paged)
   api/push/prefs/route.ts GET/PUT a device's alert areas
   api/push/subscribe/route.ts enrol a device, retiring the endpoint it replaced
 components/
-  AccessGate.tsx        per-device invite gate; picks board vs. raw feed
+  AccessGate.tsx        per-device invite gate; picks board, raw feed or map
   PagerBoard.tsx        client UI: filtering, facets, live polling
   RawFeed.tsx           client UI: the unfiltered stream
+  LiveMap.tsx           client UI: the last few hours, on a map
+  IncidentMap.tsx       the single-job map inside the incident card
   AlertPrefs.tsx        the area picker modal (LGAs + FRNSW stations)
 lib/
   types.ts              Incident + PagerMessage shapes (map 1:1 to Supabase tables)
   parser.ts             raw pager line -> Incident (forgiving)
+  entries.ts            rows -> the jobs on screen; shared by the board and the map
+  incident-points.ts    where a job goes on the map, and how exactly we know it
+  geocode.ts            browser-side forward geocoding, cached for 30 days
   filter.ts             which lines are allowed onto the board
   lga.ts                pull the LGA out of an RFS address, and normalise it
   nsw-lgas.ts           every LGA the feed has paged, + its misspellings

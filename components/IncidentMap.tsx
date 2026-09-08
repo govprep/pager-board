@@ -4,15 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Coords } from "@/lib/types";
+import { forwardGeocode } from "@/lib/geocode";
 
 // Interactive 3D map for the incident modal. Defaults to the tilted standard
 // street map (roads + 3D buildings) and can be flipped to satellite. Pan, zoom,
 // rotate and pitch are all live.
 //
 // Coords come straight from the page when present. When a page arrives without
-// them (truncated, or never carried any), we forward-geocode the address text
-// so the modal still drops a pin in the right place. Renders nothing useful
-// without a public token.
+// them (truncated, or never carried any), the address text is forward-geocoded
+// (lib/geocode.ts, shared with the live map) so the modal still drops a pin in
+// the right place. Renders nothing useful without a public token.
 
 const STYLES = {
   // streets-v12 carries a far denser, clearly-labelled road network than the
@@ -28,24 +29,6 @@ type StyleKey = keyof typeof STYLES;
 const ZOOM = 13.5;
 const PITCH = 45;
 const BEARING = -18;
-
-// Forward-geocode an address to a centre point, biased to Australia. Returns
-// null on a miss or any error — the caller shows a fallback message.
-async function geocode(address: string, token: string, signal: AbortSignal): Promise<Coords | null> {
-  try {
-    const url =
-      `https://api.mapbox.com/search/geocode/v6/forward` +
-      `?q=${encodeURIComponent(address)}&country=au&limit=1&access_token=${token}`;
-    const res = await fetch(url, { signal });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const c = data?.features?.[0]?.geometry?.coordinates;
-    if (!Array.isArray(c) || c.length < 2 || !Number.isFinite(c[0]) || !Number.isFinite(c[1]) || Math.abs(c[0]) > 180 || Math.abs(c[1]) > 90) return null;
-    return { lng: c[0], lat: c[1] };
-  } catch {
-    return null;
-  }
-}
 
 export default function IncidentMap({
   coords,
@@ -75,7 +58,7 @@ export default function IncidentMap({
     setStatus("locating");
     let alive = true;
     const controller = new AbortController();
-    geocode(address, token, controller.signal).then((found) => {
+    forwardGeocode(address, token, { signal: controller.signal }).then((found) => {
       if (!alive) return;
       if (found) {
         setCenter(found);

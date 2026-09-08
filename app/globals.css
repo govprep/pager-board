@@ -1585,3 +1585,352 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
     padding-bottom: 4px;
   }
 }
+
+/* ── live map (/map) ─────────────────────────────────── */
+/* The map fills what the topbar leaves, and every control floats over it as a
+   pane of dark glass. Nothing here is a strip along the edge: on a phone the
+   screen is the map, and a chrome bar would take a fifth of it. */
+.map-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  /* The floating-control surface. Local to the map, because it only makes sense
+     over imagery — the rest of the app is opaque panels on black. */
+  --glass: rgba(12, 12, 14, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.map-canvas { position: absolute; inset: 0; }
+
+.map-unavailable {
+  position: absolute;
+  inset: 0;
+  /* Over the canvas rather than instead of it — see the note in LiveMap. */
+  z-index: 6;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+/* Window picker: the one control that changes what the map is *of*, so it sits
+   alone in the top-left rather than in the tool stack. */
+.map-hud {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--glass-shadow);
+}
+.map-chip {
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-2);
+}
+.map-chip:hover { color: var(--text); }
+.map-chip.on { background: var(--text); color: var(--bg); }
+.map-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  padding: 0 10px 0 8px;
+  margin-left: 4px;
+  border-left: 1px solid var(--border-2);
+  white-space: nowrap;
+}
+
+/* Everything that changes how the map *looks*, stacked out of the way. */
+.map-tools {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.map-tool {
+  min-width: 58px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--glass-shadow);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.map-tool:hover { color: var(--text); }
+/* On, in the same blue "new" wears everywhere else on the board. */
+.map-tool.on {
+  background: rgba(96, 165, 250, 0.92);
+  border-color: #bfdbfe;
+  color: #04070f;
+}
+
+/* A job arriving says so here, and tapping it takes the map to it. Same blue as
+   the board's arrival flash, for the same reason: on this app, that colour means
+   "this is new". */
+.map-toasts {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(400px, calc(100% - 220px));
+}
+.map-toast {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  text-align: left;
+  background: rgba(30, 64, 175, 0.94);
+  border: 1px solid #60a5fa;
+  color: #eff6ff;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: map-toast-in 220ms ease-out;
+}
+.map-toast-tag {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.map-toast-text {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.map-toast .dim { color: rgba(219, 234, 254, 0.72); }
+@keyframes map-toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The key. Under the window picker on a pointer, where there is room for it to
+   simply be open; a tap-to-open pill on a phone, where there isn't. */
+.map-legend {
+  position: absolute;
+  top: 58px;
+  left: 12px;
+  z-index: 2;
+}
+.map-legend-toggle { display: none; }
+.map-legend-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--glass-shadow);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.map-legend-row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.map-legend-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  flex: none;
+}
+/* The marker a job gets when all we know is its suburb — a soft ring, matching
+   what the map draws for it. */
+.map-legend-dot.approx {
+  background: transparent;
+  border: 1.5px dashed rgba(255, 255, 255, 0.5);
+}
+.map-legend-note {
+  max-width: 200px;
+  color: var(--text-3);
+  line-height: 1.45;
+  white-space: normal;
+}
+
+/* The card a marker opens. Not modal — the map behind it stays live, and opening
+   another marker simply moves the card — so it takes the corner rather than the
+   screen. On a phone it becomes a sheet at the bottom, under the thumb. */
+.map-card {
+  position: absolute;
+  z-index: 5;
+  left: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: min(360px, calc(100% - 24px));
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+  animation: map-card-in 180ms ease-out;
+}
+@keyframes map-card-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.map-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 0;
+}
+.map-card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.map-card-inc {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.map-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 11px 14px 14px;
+}
+.map-card-when { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.map-card-where { display: flex; flex-direction: column; gap: 3px; }
+.map-card-where .street { font-size: 13.5px; font-weight: 500; color: var(--text); }
+.map-card-where .locality { font-size: 11.5px; color: var(--text-2); line-height: 1.45; }
+.map-card-actions { display: flex; gap: 8px; }
+.map-card-actions .map-link { margin-left: 0; padding: 6px 12px; font-size: 12px; }
+
+/* Mapbox's own controls, dressed to match. The attribution stays — it is a
+   condition of using the tiles — but it doesn't have to be a white bar. */
+.map-stage .mapboxgl-ctrl-attrib {
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--text-2);
+  font-size: 10px;
+}
+.map-stage .mapboxgl-ctrl-attrib a { color: var(--text-2); }
+.map-stage .mapboxgl-ctrl-group {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--glass-shadow);
+}
+.map-stage .mapboxgl-ctrl-group button + button { border-top-color: var(--glass-border); }
+.map-stage .mapboxgl-ctrl-group button .mapboxgl-ctrl-icon { filter: invert(1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .map-toast, .map-card { animation: none; }
+}
+
+@media (max-width: 700px) {
+  /* The map's header has no search row to wrap onto, so the live dot and the
+     clock stay on the one line with everything else rather than taking a second
+     row of the screen to themselves. */
+  .map-app .live, .map-app .clock { order: 0; }
+  .map-app .clock { padding-left: 10px; }
+
+  /* Row 1: the window picker, spanning the screen and scrolling if it must.
+     Row 2: the look controls as a row, with the key at the far end.
+     Everything else clears them. */
+  .map-hud {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .map-hud::-webkit-scrollbar { display: none; }
+  .map-chip { padding: 8px 13px; font-size: 12.5px; }
+
+  .map-tools {
+    top: 58px;
+    left: 10px;
+    right: auto;
+    flex-direction: row;
+  }
+  .map-tool { min-width: 54px; height: 36px; }
+
+  .map-toasts {
+    top: 104px;
+    left: 10px;
+    right: 10px;
+    transform: none;
+    width: auto;
+  }
+
+  /* The key opens on demand rather than sitting over the map. */
+  .map-legend { top: 58px; left: auto; right: 10px; }
+  .map-legend-toggle {
+    display: inline-flex;
+    align-items: center;
+    height: 36px;
+    padding: 0 13px;
+    border-radius: 8px;
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(10px);
+    box-shadow: var(--glass-shadow);
+    color: var(--text-2);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .map-legend-body { display: none; }
+  .map-legend.open .map-legend-toggle { color: var(--text); }
+  .map-legend.open .map-legend-body {
+    display: flex;
+    position: absolute;
+    top: 42px;
+    right: 0;
+  }
+
+  /* A sheet, not a card: full width, at the bottom, sized to its content up to
+     about two thirds of the screen. */
+  .map-card {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 62dvh;
+    overflow-y: auto;
+    border-radius: 14px 14px 0 0;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .map-card-actions .map-link { padding: 9px 14px; }
+
+  /* Pinch and double-tap do this job on a touchscreen, and the buttons would sit
+     under the sheet anyway. The attribution beside them stays. */
+  .map-stage .mapboxgl-ctrl-bottom-right .mapboxgl-ctrl-group { display: none; }
+}

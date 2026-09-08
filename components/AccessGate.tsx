@@ -18,6 +18,9 @@ function LoadingScreen() {
 
 const PagerBoard = dynamic(() => import("@/components/PagerBoard"), { loading: LoadingScreen });
 const RawFeed = dynamic(() => import("@/components/RawFeed"), { loading: LoadingScreen });
+// ssr: false, unlike the other two — Mapbox GL reaches for `window` as it loads,
+// so the map may only ever be built in the browser.
+const LiveMap = dynamic(() => import("@/components/LiveMap"), { ssr: false, loading: LoadingScreen });
 type Phase = "checking" | "need-code" | "revoked" | "authed";
 type Enrollment = { token: string; error?: never } | { token?: never; error: string };
 
@@ -58,7 +61,7 @@ async function enroll(code: string): Promise<Enrollment> {
   }
 }
 
-export default function AccessGate({ view = "board" }: { view?: "board" | "raw" }) {
+export default function AccessGate({ view = "board" }: { view?: "board" | "raw" | "map" }) {
   const [phase, setPhase] = useState<Phase>("checking");
   const [deviceToken, setDeviceToken] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState("");
@@ -228,9 +231,9 @@ export default function AccessGate({ view = "board" }: { view?: "board" | "raw" 
     );
   }
   if (phase === "authed") {
-    return view === "raw"
-      ? <RawFeed getToken={() => accessRef.current} />
-      : <PagerBoard getToken={() => accessRef.current} onSignOut={signOut} />;
+    if (view === "raw") return <RawFeed getToken={() => accessRef.current} />;
+    if (view === "map") return <LiveMap getToken={() => accessRef.current} />;
+    return <PagerBoard getToken={() => accessRef.current} onSignOut={signOut} />;
   }
 
   return (
