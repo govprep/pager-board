@@ -899,6 +899,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "bottom-right");
     map.on("load", () => {
       setMapFailed(false);
+      // The container is sized by CSS that may settle after the map was built
+      // (the topbar publishes its own height, and a phone rotates); measuring
+      // again here is cheap and a mis-sized canvas is invisible until it isn't.
+      map.resize();
       installLayers(map);
     });
     // A basemap switch throws the style away and everything in it; put it back.

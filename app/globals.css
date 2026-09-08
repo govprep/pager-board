@@ -1601,7 +1601,18 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   --glass-border: rgba(255, 255, 255, 0.14);
   --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
-.map-canvas { position: absolute; inset: 0; }
+/* Sized in two ways on purpose. Mapbox GL puts its own `.mapboxgl-map` class on
+   this element, that rule also sets `position`, and it ships as a later CSS
+   chunk than globals.css — equal specificity, so it wins and `inset` stops
+   applying. Without the explicit width/height the container then collapses to
+   nothing, which reads on screen as a black page with no map, no attribution
+   and no error. */
+.map-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
 
 .map-unavailable {
   position: absolute;
