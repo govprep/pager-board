@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServerClient } from "../lib/supabase-server";
 import { parsePagerMessage, hasIncidentNumber, pageTime } from "../lib/parser";
-import { parseStandDown, applyStandDowns, type StandDown } from "../lib/standdown";
+import { parseStandDown, mergeStandDown, applyStandDowns, type StandDown } from "../lib/standdown";
 import { passesBoardFilter } from "../lib/filter";
 import { recordRawMessages } from "../lib/raw-feed";
 import { collapseById, dropWeakerThanStored, type IncidentRow } from "../lib/incident-merge";
@@ -109,12 +109,18 @@ export function makeWriter(): Writer {
     // "STOP" as a real TYPE/location update and clobber the incident it refers
     // to on upsert). Deduplicated by line, since the same notice reaches several
     // sources; two notices naming different brigades are both kept.
+    //
+    // Copies that collapse together are merged rather than overwritten: the
+    // brigade a notice was paged to is what attributes an otherwise unnamed
+    // stand-down, and each copy carries its own (see lib/standdown.ts).
     const standDowns = new Map<string, StandDown>();
     const normalLines: PagerLine[] = [];
     for (const line of lines) {
-      const sd = parseStandDown(line.raw);
-      if (sd) standDowns.set(line.raw.replace(/\s+/g, " ").trim(), sd);
-      else normalLines.push(line);
+      const sd = parseStandDown(line.raw, line.origin);
+      if (!sd) { normalLines.push(line); continue; }
+      const key = line.raw.replace(/\s+/g, " ").trim();
+      const seen = standDowns.get(key);
+      standDowns.set(key, seen ? mergeStandDown(seen, sd) : sd);
     }
     await applyStandDowns(db, [...standDowns.values()], source);
 
