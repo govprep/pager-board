@@ -1,23 +1,22 @@
 import { NextResponse } from "next/server";
 import { verifyAccessToken } from "@/lib/access";
+import { supabase } from "@/lib/supabase";
 import {
-  fetchFireWeatherObservationSnapshot,
-  type CurrentFireWeatherStation,
-} from "@/lib/fire-weather-observations";
+  FIRE_WEATHER_BUCKET,
+  FIRE_WEATHER_OBJECT,
+  parseStoredFireWeatherSnapshot,
+  type StoredFireWeatherSnapshot,
+} from "@/lib/fire-weather-snapshot";
 
 export const dynamic = "force-dynamic";
 
-// The source is a 10-minute product. Keep one snapshot per server instance for
-// just under that period so many open maps don't multiply requests to BOM.
-const CACHE_MS = 9 * 60_000;
-const FAILED_RETRY_MS = 60_000;
+// The feeder owns BOM access and publishes one private snapshot to Supabase
+// Storage every 10 minutes. A short server-instance cache avoids downloading it
+// repeatedly when several members open the map together.
+const CACHE_MS = 60_000;
+const STALE_MS = 30 * 60_000;
 
-let cache: {
-  fetchedAt: string;
-  stations: CurrentFireWeatherStation[];
-  sourceStationCount: number;
-} | null = null;
-let lastAttempt = 0;
+let cache: { loadedAt: number; snapshot: StoredFireWeatherSnapshot } | null = null;
 
 async function isAuthed(req: Request): Promise<boolean> {
   const auth = req.headers.get("authorization") ?? "";
@@ -30,24 +29,24 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const now = Date.now();
-  if (cache && now - new Date(cache.fetchedAt).getTime() < CACHE_MS) {
-    return NextResponse.json({ ...cache, stale: false }, { headers: { "Cache-Control": "private, no-store" } });
-  }
-  if (cache && now - lastAttempt < FAILED_RETRY_MS) {
-    return NextResponse.json({ ...cache, stale: true }, { headers: { "Cache-Control": "private, no-store" } });
-  }
-
-  lastAttempt = now;
   try {
-    const snapshot = await fetchFireWeatherObservationSnapshot();
-    cache = { fetchedAt: new Date().toISOString(), ...snapshot };
-    return NextResponse.json({ ...cache, stale: false }, { headers: { "Cache-Control": "private, no-store" } });
-  } catch (error) {
-    console.error("[fire-weather] current observations:", (error as Error).message);
-    if (cache) {
-      return NextResponse.json({ ...cache, stale: true }, { headers: { "Cache-Control": "private, no-store" } });
+    const now = Date.now();
+    let snapshot = cache && now - cache.loadedAt < CACHE_MS ? cache.snapshot : null;
+    if (!snapshot) {
+      const { data, error } = await supabase.storage
+        .from(FIRE_WEATHER_BUCKET)
+        .download(FIRE_WEATHER_OBJECT);
+      if (error) throw error;
+      snapshot = parseStoredFireWeatherSnapshot(JSON.parse(await data.text()));
+      if (!snapshot) throw new Error("Stored fire weather snapshot is invalid");
+      cache = { loadedAt: now, snapshot };
     }
+    const stale = now - new Date(snapshot.fetchedAt).getTime() > STALE_MS;
+    return NextResponse.json({ ...snapshot, stale }, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
+  } catch (error) {
+    console.error("[fire-weather] stored observations:", (error as Error).message);
     return NextResponse.json({ error: "Unable to load fire weather observations" }, { status: 503 });
   }
 }

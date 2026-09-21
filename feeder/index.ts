@@ -46,6 +46,8 @@ import { pollPagerMon } from "./sources/pagermon";
 import { pollRfsPager } from "./sources/rfspager";
 import { pollPublicPagerMons } from "./sources/public-pagermon";
 import { pollTelegram } from "./sources/telegram";
+import { createServerClient } from "../lib/supabase-server";
+import { startFireWeatherSnapshots } from "./fire-weather-snapshot";
 
 (async () => {
   const { post } = makeWriter();
@@ -56,4 +58,8 @@ import { pollTelegram } from "./sources/telegram";
   pollRfsPager(post);
   pollPublicPagerMons(post);
   pollTelegram(post);
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (url && key) startFireWeatherSnapshots(createServerClient(url, key));
 })();

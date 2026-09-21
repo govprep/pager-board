@@ -238,7 +238,7 @@ type WeatherFeature = {
   properties: Record<string, string | number | boolean>;
 };
 
-function weatherFeature(station: CurrentFireWeatherStation): WeatherFeature {
+function weatherFeature(station: CurrentFireWeatherStation, snapshotStale = false): WeatherFeature {
   return {
     type: "Feature",
     geometry: { type: "Point", coordinates: [station.lng, station.lat] },
@@ -246,7 +246,7 @@ function weatherFeature(station: CurrentFireWeatherStation): WeatherFeature {
       id: station.id,
       maxFbi: station.maxFbi ?? -1,
       maxFdr: station.maxFdr ?? -1,
-      old: station.olderThan30Min,
+      old: station.olderThan30Min || snapshotStale,
       incomplete: station.incomplete,
     },
   };
@@ -513,10 +513,12 @@ function valueOrDash(value: number | null, suffix: string): React.ReactNode {
 function WeatherModal({
   station,
   now,
+  snapshotStale,
   onClose,
 }: {
   station: CurrentFireWeatherStation;
   now: number;
+  snapshotStale: boolean;
   onClose: () => void;
 }) {
   const dialogRef = useDialog(onClose);
@@ -556,8 +558,10 @@ function WeatherModal({
             <span className="modal-value">
               {fmt(station.observedAt)} <span className="dim">({relativeAge(station.observedAt, now)} ago)</span>
             </span>
-            {(station.olderThan30Min || station.incomplete) && (
+            {(snapshotStale || station.olderThan30Min || station.incomplete) && (
               <span className="weather-quality" role="status">
+                {snapshotStale && "The stored station snapshot is older than 30 minutes."}
+                {snapshotStale && (station.olderThan30Min || station.incomplete) && " "}
                 {station.olderThan30Min && "BOM marks this observation as older than 30 minutes."}
                 {station.olderThan30Min && station.incomplete && " "}
                 {station.incomplete && "BOM marks this observation as incomplete."}
@@ -1536,12 +1540,12 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   }, [placed, now, hours, freshKeys]);
 
   useEffect(() => {
-    const features = weatherStations.map(weatherFeature);
+    const features = weatherStations.map((station) => weatherFeature(station, weatherStale));
     weatherDataRef.current = { type: "FeatureCollection", features };
     const map = mapRef.current;
     if (!map || !layersReady.current) return;
     (map.getSource(SRC.weather) as GeoJSONSource | undefined)?.setData(weatherDataRef.current);
-  }, [weatherStations]);
+  }, [weatherStations, weatherStale]);
 
   // Frame the traffic the first time there is any. Only once: a map that
   // re-framed itself every time a page arrived would move under the hand of
@@ -1955,6 +1959,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
             <WeatherModal
               station={selectedWeather}
               now={now}
+              snapshotStale={weatherStale}
               onClose={() => {
                 selectedWeatherRef.current = null;
                 setSelectedWeatherId(null);
