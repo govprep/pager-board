@@ -1787,6 +1787,25 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   border-color: #bfdbfe;
   color: #04070f;
 }
+.map-tool.fire { letter-spacing: 0.08em; }
+
+.map-weather-error {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  width: min(420px, calc(100% - 160px));
+  padding: 8px 11px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 8px;
+  background: rgba(69, 26, 3, 0.92);
+  box-shadow: var(--glass-shadow);
+  color: #fde68a;
+  font-size: 11.5px;
+  text-align: center;
+}
+.map-weather-error button { margin-left: 6px; text-decoration: underline; }
 
 /* A job arriving says so across the top, where nothing else lives and nothing
    can hide it. Same blue as the board's arrival flash, for the same reason: on
@@ -1872,6 +1891,29 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   font-size: 11.5px;
   color: var(--text-2);
 }
+.map-legend-heading {
+  color: var(--text);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.map-fire-key {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 9px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.map-legend-swatch {
+  width: 18px;
+  height: 9px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  flex: none;
+}
+.map-legend-swatch.unavailable { background: #64748b; }
 .map-legend-row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .map-legend-dot {
   width: 11px;
@@ -1958,6 +2000,80 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
 .map-card-actions { display: flex; gap: 8px; }
 .map-card-actions .map-link { margin-left: 0; padding: 6px 12px; font-size: 12px; }
 
+/* The station observation opens in the board's existing modal language rather
+   than in the compact incident map card: it has enough weather and fuel detail
+   to need the room, and focus should stay inside while it is being read. */
+.weather-modal { max-width: 560px; }
+.weather-modal-title {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+.weather-rating {
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: 5px;
+  color: #080808;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.weather-reading-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+.weather-fuels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.weather-fuel {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.weather-fuel.max { border-color: rgba(96, 165, 250, 0.72); }
+.weather-fuel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.weather-max {
+  flex: none;
+  color: #93c5fd;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.weather-fbi-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+.weather-quality {
+  color: #fbbf24;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.map-weather-caveat {
+  padding-left: 9px;
+  border-left: 2px solid var(--text-3);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* Mapbox's own controls, dressed to match. The attribution stays — it is a
    condition of using the tiles — but it doesn't have to be a white bar. */
 .map-stage .mapboxgl-ctrl-attrib {
@@ -2043,6 +2159,8 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
     position: absolute;
     top: 42px;
     right: 0;
+    max-height: calc(100dvh - var(--topbar-h) - 120px);
+    overflow-y: auto;
   }
 
   /* A sheet, not a card: full width, at the bottom, sized to its content up to
@@ -2059,6 +2177,17 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .map-card-actions .map-link { padding: 9px 14px; }
+
+  .map-weather-error {
+    left: 10px;
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    transform: none;
+    width: auto;
+  }
+  .weather-modal-overlay { padding: 10px; }
+  .weather-modal { max-height: calc(100dvh - var(--topbar-h) - 20px); }
+  .weather-reading-grid, .weather-fuels { grid-template-columns: 1fr; }
 
   /* Pinch and double-tap do this job on a touchscreen, and the buttons would sit
      under the sheet anyway. The attribution beside them stays. */

@@ -35,6 +35,11 @@ import EnableAlerts from "@/components/EnableAlerts";
 import Clock from "@/components/Clock";
 import LiveDot, { type LiveState } from "@/components/LiveDot";
 import { fmtTime as fmt, relativeAge } from "@/lib/time";
+import { useDialog } from "@/components/use-dialog";
+import type {
+  CurrentFireWeatherStation,
+  StationFuelObservation,
+} from "@/lib/fire-weather-observations";
 
 // ── what the map holds ──────────────────────────────────────────────────────
 
@@ -52,6 +57,9 @@ const MAX_PAGES = 8;
 // How often the clock-driven parts re-read (ages, the window's own cutoff, the
 // heat weights). Coarse on purpose — nothing here is displayed to the second.
 const TICK_MS = 30_000;
+// BOM's station product is a 10-minute observation. Polling faster creates more
+// requests without creating newer weather.
+const WEATHER_REFRESH_MS = 10 * 60_000;
 
 // A job has to have started this recently to count as news rather than as
 // history arriving. Same reasoning, and the same number, as the board's flash.
@@ -85,6 +93,7 @@ const EMPTY_SET: ReadonlySet<string> = new Set<string>();
 const STORE = {
   window: "belterhub.map.window",
   heat: "belterhub.map.heat",
+  weather: "belterhub.map.fire-weather",
   sound: "belterhub.map.sound",
   basemap: "belterhub.map.basemap",
 };
@@ -101,6 +110,49 @@ const STYLES = {
   satellite: "mapbox://styles/mapbox/satellite-streets-v12",
 } as const;
 type BaseMap = keyof typeof STYLES;
+type WeatherMode = "off" | "fdr" | "fbi";
+
+const AFDRS = [
+  { name: "No Rating", min: 0, color: "#ffffff" },
+  // Exact screen RGB values from AFAC's AFDRS Style Guidelines (2025).
+  { name: "Moderate", min: 12, color: "#64bf30" },
+  { name: "High", min: 24, color: "#fedd3a" },
+  { name: "Extreme", min: 50, color: "#f78100" },
+  { name: "Catastrophic", min: 100, color: "#ad0909" },
+] as const;
+
+function ratingFor(code: number | null | undefined) {
+  return code != null && code >= 0 && code < AFDRS.length ? AFDRS[code] : null;
+}
+
+function ratingForFbi(fbi: number | null | undefined) {
+  return ratingFor(fbi == null || fbi < 0 ? null :
+    fbi >= 100 ? 4 : fbi >= 50 ? 3 : fbi >= 24 ? 2 : fbi >= 12 ? 1 : 0);
+}
+
+function weatherColor(mode: WeatherMode): mapboxgl.ExpressionSpecification {
+  if (mode === "fbi") {
+    // A continuous rendering for the numerical view, anchored to the official
+    // FBI category thresholds. Exact values remain visible at station points.
+    return [
+      "interpolate", ["linear"], ["get", "maxFbi"],
+      0, AFDRS[0].color,
+      12, AFDRS[1].color,
+      24, AFDRS[2].color,
+      50, AFDRS[3].color,
+      100, AFDRS[4].color,
+    ];
+  }
+  return [
+    "match", ["get", "maxFdr"],
+    0, AFDRS[0].color,
+    1, AFDRS[1].color,
+    2, AFDRS[2].color,
+    3, AFDRS[3].color,
+    4, AFDRS[4].color,
+    "#64748b",
+  ];
+}
 
 // Dot colours, keyed by the same classes the board's type tags use
 // (lib/entries.ts) so a fire is red in both places.
@@ -145,8 +197,12 @@ const LEGEND: { cls: string; label: string }[] = [
 // legible at state zoom, but a clustered source has nothing left to make a heat
 // map out of — the points have already been collapsed — so the heat layer and
 // the new-job pulse read the plain one.
-const SRC = { plain: "jobs", clustered: "jobs-clustered" };
+const SRC = { plain: "jobs", clustered: "jobs-clustered", weather: "fire-weather-stations" };
 const LYR = {
+  weatherSurface: "fire-weather-surface",
+  weatherStation: "fire-weather-station",
+  weatherLabel: "fire-weather-label",
+  weatherSelected: "fire-weather-selected",
   heat: "jobs-heat",
   approx: "jobs-approx",
   pulse: "jobs-pulse",
@@ -175,6 +231,26 @@ type JobFeature = {
   geometry: { type: "Point"; coordinates: [number, number] };
   properties: Record<string, string | number | boolean>;
 };
+
+type WeatherFeature = {
+  type: "Feature";
+  geometry: { type: "Point"; coordinates: [number, number] };
+  properties: Record<string, string | number | boolean>;
+};
+
+function weatherFeature(station: CurrentFireWeatherStation): WeatherFeature {
+  return {
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [station.lng, station.lat] },
+    properties: {
+      id: station.id,
+      maxFbi: station.maxFbi ?? -1,
+      maxFdr: station.maxFdr ?? -1,
+      old: station.olderThan30Min,
+      incomplete: station.incomplete,
+    },
+  };
+}
 
 // A stable, small offset for a job we only know the suburb of.
 //
@@ -422,6 +498,132 @@ function JobCard({
   );
 }
 
+function fuelName(fuel: StationFuelObservation): string {
+  const parts = [fuel.model, fuel.name].filter((part, index, all) =>
+    part && (index === 0 || part.toLowerCase() !== all[0]?.toLowerCase()),
+  );
+  const named = parts.join(" — ") || "Fuel metadata unavailable";
+  return fuel.code == null ? named : `${named} · type ${fuel.code}`;
+}
+
+function valueOrDash(value: number | null, suffix: string): React.ReactNode {
+  return value == null ? <span className="dim">—</span> : `${value}${suffix}`;
+}
+
+function WeatherModal({
+  station,
+  now,
+  onClose,
+}: {
+  station: CurrentFireWeatherStation;
+  now: number;
+  onClose: () => void;
+}) {
+  const dialogRef = useDialog(onClose);
+  const rating = ratingFor(station.maxFdr);
+
+  return (
+    <div className="modal-overlay weather-modal-overlay" onClick={onClose}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Fire weather observation at ${station.name}`}
+        tabIndex={-1}
+        className="modal weather-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-top">
+          <div className="modal-head">
+            <div className="weather-modal-title">
+              <span className="modal-inc">{station.name}</span>
+              {rating && (
+                <span
+                  className="weather-rating"
+                  style={{ backgroundColor: rating.color, color: station.maxFdr === 4 ? "#fff" : "#080808" }}
+                >
+                  {rating.name} · FBI {station.maxFbi}
+                </span>
+              )}
+            </div>
+            <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
+        </div>
+
+        <div className="modal-body">
+          <div className="modal-field">
+            <span className="modal-label">Observed</span>
+            <span className="modal-value">
+              {fmt(station.observedAt)} <span className="dim">({relativeAge(station.observedAt, now)} ago)</span>
+            </span>
+            {(station.olderThan30Min || station.incomplete) && (
+              <span className="weather-quality" role="status">
+                {station.olderThan30Min && "BOM marks this observation as older than 30 minutes."}
+                {station.olderThan30Min && station.incomplete && " "}
+                {station.incomplete && "BOM marks this observation as incomplete."}
+              </span>
+            )}
+          </div>
+
+          <div className="weather-reading-grid">
+            <div className="modal-field">
+              <span className="modal-label">Temperature</span>
+              <span className="modal-value">{valueOrDash(station.tempC, "°C")}</span>
+            </div>
+            <div className="modal-field">
+              <span className="modal-label">Relative humidity</span>
+              <span className="modal-value">{valueOrDash(station.humidityPct, "%")}</span>
+            </div>
+            <div className="modal-field">
+              <span className="modal-label">Wind</span>
+              <span className="modal-value">
+                {station.windSpdKmh == null
+                  ? <span className="dim">—</span>
+                  : `${station.windSpdKmh} km/h`}
+              </span>
+            </div>
+            <div className="modal-field">
+              <span className="modal-label">Wind gust</span>
+              <span className="modal-value">{valueOrDash(station.windGustKmh, " km/h")}</span>
+            </div>
+            <div className="modal-field">
+              <span className="modal-label">Direction</span>
+              <span className="modal-value">{station.windDir ?? <span className="dim">—</span>}</span>
+            </div>
+          </div>
+
+          <div className="weather-fuels">
+            {[station.primary, station.secondary].map((fuel) => {
+              const fuelRating = ratingForFbi(fuel.fbi);
+              const isMax = station.maxFuel === fuel.slot;
+              return (
+                <div key={fuel.slot} className={`weather-fuel${isMax ? " max" : ""}`}>
+                  <div className="weather-fuel-head">
+                    <span className="modal-label">{fuel.slot === "primary" ? "Fuel type 1" : "Fuel type 2"}</span>
+                    {isMax && <span className="weather-max">Map maximum</span>}
+                  </div>
+                  <span className="modal-value">{fuelName(fuel)}</span>
+                  <span className="weather-fbi-value">
+                    FBI {fuel.fbi ?? "—"}
+                    {fuelRating && <span style={{ color: fuelRating.color }}> · {fuelRating.name}</span>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {station.maxFbi == null && (
+            <p className="weather-quality">No FBI is available for either fuel at this station, so it does not colour the heat surface.</p>
+          )}
+          <p className="map-weather-caveat">
+            The surface is an interpolation of station observations, not a gridded forecast. The map uses the higher FBI from fuel types 1 and 2 at each station.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── the map ─────────────────────────────────────────────────────────────────
 
 type Toast = { key: string; label: string; place: string; at: number };
@@ -442,6 +644,14 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   const [autoCard, setAutoCard] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [heat, setHeat] = useState(true);
+  const [weatherMode, setWeatherMode] = useState<WeatherMode>("fdr");
+  const [weatherStations, setWeatherStations] = useState<CurrentFireWeatherStation[]>([]);
+  const [weatherSourceCount, setWeatherSourceCount] = useState(0);
+  const [weatherFetchedAt, setWeatherFetchedAt] = useState<string | null>(null);
+  const [weatherStale, setWeatherStale] = useState(false);
+  const [weatherLoading, setWeatherLoading] = useState(true);
+  const [weatherError, setWeatherError] = useState("");
+  const [selectedWeatherId, setSelectedWeatherId] = useState<string | null>(null);
   const [sound, setSound] = useState(false);
   const [basemap, setBasemap] = useState<BaseMap>("dark");
   const [legendOpen, setLegendOpen] = useState(false);
@@ -463,6 +673,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     type: "FeatureCollection",
     features: [],
   });
+  const weatherDataRef = useRef<{ type: "FeatureCollection"; features: WeatherFeature[] }>({
+    type: "FeatureCollection",
+    features: [],
+  });
   const loadSequence = useRef(0);
   // Each job's resources as the last pass saw them — the baseline for both
   // "this job is new" and "this resource just joined it".
@@ -478,9 +692,11 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   const hoursRef = useRef(DEFAULT_WINDOW);
   const chimeRef = useRef<(() => void) | null>(null);
   const selectedRef = useRef<string | null>(null);
+  const selectedWeatherRef = useRef<string | null>(null);
   const autoCardRef = useRef(false);
   const placedRef = useRef<Map<string, Placed>>(new Map());
   const heatRef = useRef(true);
+  const weatherModeRef = useRef<WeatherMode>("fdr");
   // The style the map is actually showing. A basemap switch is asked for by
   // state and answered by the map, and the two are only in step once the new
   // style has loaded — so what has been applied is tracked rather than inferred.
@@ -488,8 +704,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
 
   useEffect(() => { soundRef.current = sound; }, [sound]);
   useEffect(() => { heatRef.current = heat; }, [heat]);
+  useEffect(() => { weatherModeRef.current = weatherMode; }, [weatherMode]);
   useEffect(() => { hoursRef.current = hours; }, [hours]);
   useEffect(() => { selectedRef.current = selectedKey; }, [selectedKey]);
+  useEffect(() => { selectedWeatherRef.current = selectedWeatherId; }, [selectedWeatherId]);
   useEffect(() => { autoCardRef.current = autoCard; }, [autoCard]);
 
   // Restore what this device chose last time. In an effect rather than in the
@@ -500,6 +718,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       if (WINDOWS.includes(saved as (typeof WINDOWS)[number])) setHours(saved);
       const style = localStorage.getItem(STORE.basemap);
       if (style === "dark" || style === "satellite") setBasemap(style);
+      const savedWeather = localStorage.getItem(STORE.weather);
+      if (savedWeather === "off" || savedWeather === "fdr" || savedWeather === "fbi") {
+        setWeatherMode(savedWeather);
+      }
     } catch {
       // Unavailable storage — the defaults are good ones.
     }
@@ -508,6 +730,44 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   }, []);
 
   // ── data ──────────────────────────────────────────────────────────────────
+
+  const loadWeather = useCallback(async () => {
+    try {
+      const auth = tokenRef.current();
+      const res = await fetch("/api/fire-weather", {
+        cache: "no-store",
+        headers: auth ? { Authorization: `Bearer ${auth}` } : {},
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      if (!Array.isArray(data.stations)) throw new Error("invalid station response");
+      const stations = data.stations as CurrentFireWeatherStation[];
+      setWeatherStations(stations);
+      setWeatherSourceCount(typeof data.sourceStationCount === "number" ? data.sourceStationCount : stations.length);
+      setWeatherFetchedAt(typeof data.fetchedAt === "string" ? data.fetchedAt : null);
+      setWeatherStale(data.stale === true);
+      setWeatherError("");
+    } catch {
+      setWeatherError("Fire weather observations are temporarily unavailable.");
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadWeather();
+    const timer = setInterval(() => void loadWeather(), WEATHER_REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadWeather();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [loadWeather]);
 
   const fetchPage = useCallback(async (before?: Incident): Promise<Incident[] | null> => {
     try {
@@ -857,6 +1117,91 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   // throws the old style's sources and layers away with it.
   const installLayers = useCallback((map: mapboxgl.Map) => {
     const data = dataRef.current;
+    const weatherData = weatherDataRef.current;
+
+    if (!map.getSource(SRC.weather)) {
+      map.addSource(SRC.weather, { type: "geojson", data: weatherData });
+    }
+
+    // A data-driven, blurred circle surface rather than Mapbox's density
+    // heatmap: density colours how many stations overlap, while this product
+    // must colour each observation by its AFDRS band/FBI. Higher FBI stations
+    // sort on top where influence circles overlap.
+    if (!map.getLayer(LYR.weatherSurface)) {
+      map.addLayer({
+        id: LYR.weatherSurface,
+        type: "circle",
+        source: SRC.weather,
+        filter: ["all", [">=", ["get", "maxFbi"], 0], ["==", ["get", "old"], false]],
+        layout: { "circle-sort-key": ["get", "maxFbi"] },
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 32, 7, 58, 10, 88, 13, 130],
+          "circle-color": weatherColor(weatherModeRef.current),
+          "circle-opacity": ["case", ["==", ["get", "incomplete"], true], 0.32, 0.46],
+          "circle-blur": 0.72,
+        },
+      });
+    }
+
+    // All located stations remain present, including missing/stale readings.
+    // Those are grey rather than being misrepresented as No Rating.
+    if (!map.getLayer(LYR.weatherStation)) {
+      map.addLayer({
+        id: LYR.weatherStation,
+        type: "circle",
+        source: SRC.weather,
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 2.5, 9, 4.5, 13, 6],
+          "circle-color": [
+            "case",
+            ["any", ["<", ["get", "maxFbi"], 0], ["==", ["get", "old"], true]],
+            "#64748b",
+            weatherColor(weatherModeRef.current),
+          ],
+          "circle-opacity": 0.92,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "rgba(255,255,255,0.9)",
+        },
+      });
+    }
+
+    if (!map.getLayer(LYR.weatherLabel)) {
+      map.addLayer({
+        id: LYR.weatherLabel,
+        type: "symbol",
+        source: SRC.weather,
+        minzoom: 7,
+        filter: [">=", ["get", "maxFbi"], 0],
+        layout: {
+          "text-field": ["to-string", ["get", "maxFbi"]],
+          "text-size": 10.5,
+          "text-offset": [0, 1.15],
+          "text-anchor": "top",
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": "#ffffff",
+          "text-halo-color": "rgba(0,0,0,0.95)",
+          "text-halo-width": 1.4,
+        },
+      });
+    }
+
+    if (!map.getLayer(LYR.weatherSelected)) {
+      map.addLayer({
+        id: LYR.weatherSelected,
+        type: "circle",
+        source: SRC.weather,
+        filter: ["==", ["get", "id"], ""],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 7, 13, 12],
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-opacity": 1,
+        },
+      });
+    }
 
     if (!map.getSource(SRC.plain)) {
       map.addSource(SRC.plain, { type: "geojson", data });
@@ -1048,11 +1393,18 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     // A style reload arrives with the layers at their defaults, so everything
     // the user had set is re-stated here rather than waiting on a state change
     // that isn't coming.
-    map.setLayoutProperty(LYR.heat, "visibility", heatRef.current ? "visible" : "none");
+    const showWeather = weatherModeRef.current !== "off";
+    map.setLayoutProperty(LYR.heat, "visibility", heatRef.current && !showWeather ? "visible" : "none");
+    for (const id of [LYR.weatherSurface, LYR.weatherStation, LYR.weatherSelected]) {
+      map.setLayoutProperty(id, "visibility", showWeather ? "visible" : "none");
+    }
+    map.setLayoutProperty(LYR.weatherLabel, "visibility", weatherModeRef.current === "fbi" ? "visible" : "none");
+    map.setFilter(LYR.weatherSelected, ["==", ["get", "id"], selectedWeatherRef.current ?? ""]);
     map.setFilter(LYR.selected, ["==", ["get", "key"], selectedRef.current ?? " "]);
     for (const id of [SRC.plain, SRC.clustered]) {
       (map.getSource(id) as GeoJSONSource | undefined)?.setData(dataRef.current);
     }
+    (map.getSource(SRC.weather) as GeoJSONSource | undefined)?.setData(weatherDataRef.current);
   }, []);
 
   // Build the map once. Style changes and data updates are applied to it in
@@ -1098,9 +1450,13 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
 
     map.on("click", LYR.point, (e) => {
       const key = clicked(e.features?.[0])?.properties?.key;
-      if (typeof key === "string") openCard(key);
+      if (typeof key === "string") {
+        setSelectedWeatherId(null);
+        openCard(key);
+      }
     });
     map.on("click", LYR.clusters, (e) => {
+      setSelectedWeatherId(null);
       const feature = clicked(e.features?.[0]);
       const clusterId = feature?.properties?.cluster_id;
       const source = map.getSource(SRC.clustered) as GeoJSONSource | undefined;
@@ -1115,15 +1471,45 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
         map.easeTo({ center: centre, zoom });
       });
     });
-    // Tapping the map away from a marker closes the card, the way tapping the
-    // backdrop of a dialog does.
+    // Jobs win when a weather surface and a job overlap. Otherwise any point on
+    // the coloured surface opens the nearest station contributing at that
+    // pixel; the exact station is named in the modal so interpolation is never
+    // presented as though it were a reading taken at the clicked coordinates.
     map.on("click", (e) => {
       const hits = map.queryRenderedFeatures(e.point, {
         layers: [LYR.point, LYR.clusters].filter((id) => map.getLayer(id)),
       });
-      if (hits.length === 0) closeCard();
+      if (hits.length > 0) return;
+
+      if (weatherModeRef.current !== "off") {
+        const weatherHits = map.queryRenderedFeatures(e.point, {
+          layers: [LYR.weatherStation, LYR.weatherSurface].filter((id) => map.getLayer(id)),
+        });
+        let nearest: { id: string; distance: number } | null = null;
+        const seen = new Set<string>();
+        for (const hit of weatherHits) {
+          const feature = clicked(hit);
+          const id = feature?.properties?.id;
+          const coordinates = feature?.geometry?.coordinates;
+          if (typeof id !== "string" || !coordinates || seen.has(id)) continue;
+          seen.add(id);
+          const point = map.project(coordinates);
+          const distance = Math.hypot(point.x - e.point.x, point.y - e.point.y);
+          if (!nearest || distance < nearest.distance) nearest = { id, distance };
+        }
+        if (nearest) {
+          closeCard();
+          selectedWeatherRef.current = nearest.id;
+          setSelectedWeatherId(nearest.id);
+          return;
+        }
+      }
+
+      closeCard();
+      selectedWeatherRef.current = null;
+      setSelectedWeatherId(null);
     });
-    for (const id of [LYR.point, LYR.clusters]) {
+    for (const id of [LYR.point, LYR.clusters, LYR.weatherStation]) {
       map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
       map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
     }
@@ -1148,6 +1534,14 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       (map.getSource(id) as GeoJSONSource | undefined)?.setData(dataRef.current);
     }
   }, [placed, now, hours, freshKeys]);
+
+  useEffect(() => {
+    const features = weatherStations.map(weatherFeature);
+    weatherDataRef.current = { type: "FeatureCollection", features };
+    const map = mapRef.current;
+    if (!map || !layersReady.current) return;
+    (map.getSource(SRC.weather) as GeoJSONSource | undefined)?.setData(weatherDataRef.current);
+  }, [weatherStations]);
 
   // Frame the traffic the first time there is any. Only once: a map that
   // re-framed itself every time a page arrived would move under the hand of
@@ -1185,8 +1579,31 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.getLayer(LYR.heat)) return;
-    map.setLayoutProperty(LYR.heat, "visibility", heat ? "visible" : "none");
-  }, [heat]);
+    map.setLayoutProperty(LYR.heat, "visibility", heat && weatherMode === "off" ? "visible" : "none");
+  }, [heat, weatherMode]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getLayer(LYR.weatherSurface)) return;
+    const show = weatherMode !== "off";
+    for (const id of [LYR.weatherSurface, LYR.weatherStation, LYR.weatherSelected]) {
+      map.setLayoutProperty(id, "visibility", show ? "visible" : "none");
+    }
+    map.setLayoutProperty(LYR.weatherLabel, "visibility", weatherMode === "fbi" ? "visible" : "none");
+    if (show) {
+      const color = weatherColor(weatherMode);
+      map.setPaintProperty(LYR.weatherSurface, "circle-color", color);
+      map.setPaintProperty(LYR.weatherStation, "circle-color", [
+        "case",
+        ["any", ["<", ["get", "maxFbi"], 0], ["==", ["get", "old"], true]],
+        "#64748b",
+        color,
+      ]);
+    } else {
+      selectedWeatherRef.current = null;
+      setSelectedWeatherId(null);
+    }
+  }, [weatherMode]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1194,6 +1611,12 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     // "" is a key nothing can have — the filter's "select none".
     map.setFilter(LYR.selected, ["==", ["get", "key"], selectedKey ?? ""]);
   }, [selectedKey]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getLayer(LYR.weatherSelected)) return;
+    map.setFilter(LYR.weatherSelected, ["==", ["get", "id"], selectedWeatherId ?? ""]);
+  }, [selectedWeatherId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1209,6 +1632,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   const selected = useMemo(
     () => (selectedKey ? placed.find((p) => p.entry.key === selectedKey) ?? null : null),
     [placed, selectedKey],
+  );
+  const selectedWeather = useMemo(
+    () => selectedWeatherId ? weatherStations.find((station) => station.id === selectedWeatherId) ?? null : null,
+    [selectedWeatherId, weatherStations],
   );
 
   // Opening a job from a toast (or from a card that's already open) brings the
@@ -1251,6 +1678,13 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     }
   }
 
+  function cycleWeather() {
+    const next: WeatherMode = weatherMode === "fdr" ? "fbi" : weatherMode === "fbi" ? "off" : "fdr";
+    weatherModeRef.current = next;
+    setWeatherMode(next);
+    writeSetting(STORE.weather, next);
+  }
+
   function chooseWindow(next: number) {
     setHours(next);
     writeSetting(STORE.window, String(next));
@@ -1286,6 +1720,9 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
 
   const approximate = placed.filter((p) => p.precision !== "exact").length;
   const unplaced = entries.length - placed.length;
+  const ratedStations = weatherStations.filter(
+    (station) => station.maxFbi != null && !station.olderThan30Min,
+  ).length;
 
   return (
     <div className="app map-app">
@@ -1362,12 +1799,30 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
           <div className="map-tools">
             <button
               type="button"
-              className={`map-tool${heat ? " on" : ""}`}
+              className={`map-tool fire${weatherMode !== "off" ? " on" : ""}`}
+              aria-label={`Fire weather overlay: ${weatherMode === "off" ? "off" : weatherMode.toUpperCase()}. Activate to show the next mode.`}
+              aria-pressed={weatherMode !== "off"}
+              title={
+                weatherMode === "fdr"
+                  ? "Fire weather: AFDRS ratings. Click for numerical FBI."
+                  : weatherMode === "fbi"
+                    ? "Fire weather: numerical FBI. Click to turn off."
+                    : "Fire weather off. Click for AFDRS ratings."
+              }
+              onClick={cycleWeather}
+            >
+              {weatherMode === "off" ? "Fire" : weatherMode.toUpperCase()}
+            </button>
+            <button
+              type="button"
+              className={`map-tool${heat && weatherMode === "off" ? " on" : ""}`}
               aria-pressed={heat}
-              title="Heat map — where the traffic is concentrated"
+              title={weatherMode === "off"
+                ? "Incident density heat map"
+                : "Incident density heat map (hidden while fire weather is displayed)"}
               onClick={() => { setHeat(!heat); writeSetting(STORE.heat, heat ? "0" : "1"); }}
             >
-              Heat
+              Jobs
             </button>
             <button
               type="button"
@@ -1406,6 +1861,37 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
               Key
             </button>
             <div className="map-legend-body">
+              {weatherMode !== "off" && (
+                <div className="map-fire-key">
+                  <span className="map-legend-heading">
+                    Fire weather · {weatherMode === "fdr" ? "AFDRS" : "FBI"}
+                  </span>
+                  {AFDRS.map((rating, index) => (
+                    <span key={rating.name} className="map-legend-row">
+                      <span className="map-legend-swatch" style={{ background: rating.color }} />
+                      {rating.name}
+                      <span className="dim">
+                        {index === 0 ? "0–11" : index === 4 ? "100+" : `${rating.min}–${(AFDRS[index + 1]?.min ?? rating.min + 1) - 1}`}
+                      </span>
+                    </span>
+                  ))}
+                  <span className="map-legend-row">
+                    <span className="map-legend-swatch unavailable" />
+                    Unavailable / stale
+                  </span>
+                  <span className="map-legend-note">
+                    {weatherLoading && weatherStations.length === 0
+                      ? "Loading station observations…"
+                      : `${ratedStations} of ${weatherSourceCount || weatherStations.length} feed stations colour the surface.`}
+                    {weatherSourceCount > weatherStations.length &&
+                      ` ${weatherStations.length} are located; ${weatherSourceCount - weatherStations.length} cannot be mapped because the feed has no coordinates.`}
+                    {weatherFetchedAt && ` Refreshed ${relativeAge(weatherFetchedAt, now)} ago.`}
+                    {weatherStale && " Serving the last good snapshot."}
+                    {" "}Highest of fuel types 1 and 2. Tap the surface for the nearest contributing station.
+                  </span>
+                </div>
+              )}
+              <span className="map-legend-heading">Incidents</span>
               {LEGEND.map((item) => (
                 <span key={item.cls} className="map-legend-row">
                   <span className="map-legend-dot" style={{ background: TYPE_COLOR[item.cls] }} />
@@ -1424,6 +1910,12 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
               )}
             </div>
           </div>
+
+          {weatherError && weatherMode !== "off" && (
+            <div className="map-weather-error" role="alert">
+              {weatherError} <button onClick={() => void loadWeather()}>Retry</button>
+            </div>
+          )}
 
           {/* A job that has just been paged says so across the top, where it
               can't be missed, and opens its own card below. Tapping the banner
@@ -1456,6 +1948,17 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
               joined={joinedForSelected}
               onKeep={keepCard}
               onClose={closeCard}
+            />
+          )}
+
+          {selectedWeather && (
+            <WeatherModal
+              station={selectedWeather}
+              now={now}
+              onClose={() => {
+                selectedWeatherRef.current = null;
+                setSelectedWeatherId(null);
+              }}
             />
           )}
         </>

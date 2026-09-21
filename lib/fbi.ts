@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { IncidentRow } from "./incident-merge";
+import { fetchFireWeatherObservations } from "./fire-weather-observations";
 
 // Fire Behaviour Index lookup — attaches the nearest BOM AWS station's current
 // primary/secondary FBI to RFS vegetation-fire-type incidents.
@@ -8,9 +9,6 @@ import type { IncidentRow } from "./incident-merge";
 // scrub, smoke reports, unknown fires) and where we know where the job is.
 // FRNSW pages carry no coordinates at all (see lib/parser.ts), so they fall
 // out of this for free — the coords check alone is what excludes them.
-
-const BOM_URL =
-  "https://reg.bom.gov.au/reguser/by_prod/afdrs/api/index.php/fire-weather-observations?product=IDZ20081&region=nsw";
 
 // BOM refreshes this feed roughly every 10 minutes ("current 10 minute data"),
 // so there's no point asking more often than that.
@@ -22,12 +20,6 @@ const CACHE_MS = 5 * 60_000;
 // incident_no (see attachFireWeather), not wall-clock since the last BOM
 // fetch, so a quiet job's first page after a lull still gets a fresh number.
 const THROTTLE_MS = 5 * 60_000;
-
-// How long to wait on BOM before giving up and serving the cached figure. This
-// call is on the ingest path (see fetchStations), so the ceiling matters more
-// than the answer — a page reaching the board late is worse than one reaching it
-// with a five-minute-old fire index.
-const BOM_TIMEOUT_MS = 8_000;
 
 /** The raw observation values the modal's Weather tab shows. */
 export interface FireObservation {
@@ -82,60 +74,32 @@ function bomConfigured(): boolean {
   return !!process.env.BOM_USER && !!process.env.BOM_PASS;
 }
 
-/** A BOM string field, or null when it's absent, blank or not a string. */
-function text(v: unknown): string | null {
-  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
-}
-
 async function fetchStations(): Promise<Station[]> {
-  const user = process.env.BOM_USER;
-  const pass = process.env.BOM_PASS;
-  if (!user || !pass) return [];
-
-  const auth = Buffer.from(`${user}:${pass}`).toString("base64");
-  // Bounded, because this sits on the ingest path: once every CACHE_MS a batch
-  // pays for this call before its rows can be upserted, and a socket that hangs
-  // rather than refusing would stall that batch indefinitely with nothing to cut
-  // it off. On timeout getStations() falls back to the last good cache exactly
-  // as it does for any other failure, so a slow BOM costs one stale figure, not
-  // a stuck feeder.
-  const res = await fetch(BOM_URL, {
-    headers: { Authorization: `Basic ${auth}` },
-    signal: AbortSignal.timeout(BOM_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`BOM fire weather fetch failed: ${res.status}`);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const body: any = await res.json();
-  const stations: Station[] = [];
-  for (const row of body?.data ?? []) {
-    const info = row?.station_info;
-    const obs = row?.observation_data;
-    if (typeof info?.latitude !== "number" || typeof info?.longitude !== "number") continue;
-    if (typeof obs?.primary_fbi !== "number") continue;
-    if (typeof obs?.seconds_since_epoch !== "number") continue;
-    stations.push({
-      name: info.station_name ?? info.description ?? "",
-      lat: info.latitude,
-      lng: info.longitude,
-      primaryFbi: obs.primary_fbi,
-      secondaryFbi: obs.secondary_fbi ?? obs.primary_fbi,
-      observedAtEpoch: obs.seconds_since_epoch,
+  const current = await fetchFireWeatherObservations();
+  return current.flatMap((station) => {
+    // Incident enrichment requires a primary figure. Stations without one
+    // remain available to the map, but cannot stamp an incident.
+    if (station.primary.fbi == null) return [];
+    return [{
+      name: station.name,
+      lat: station.lat,
+      lng: station.lng,
+      primaryFbi: station.primary.fbi,
+      secondaryFbi: station.secondary.fbi ?? station.primary.fbi,
+      observedAtEpoch: new Date(station.observedAt).getTime() / 1000,
       observation: {
-        tempC: typeof obs.temp === "number" ? obs.temp : null,
-        humidityPct: typeof obs.rh === "number" ? obs.rh : null,
-        windDir: typeof obs.wind_dir === "string" ? obs.wind_dir : null,
-        windSpdKmh: typeof obs.wnd_spd_kmh === "number" ? obs.wnd_spd_kmh : null,
-        windGustKmh: typeof obs.wnd_gust_spd_kmh === "number" ? obs.wnd_gust_spd_kmh : null,
-        // Which fuel each rating describes — off station_info, not the reading.
-        primaryFuelModel: text(info.primary_fbm),
-        primaryFuelName: text(info.primary_fine_fuel_name),
-        secondaryFuelModel: text(info.secondary_fbm),
-        secondaryFuelName: text(info.secondary_fine_fuel_name),
+        tempC: station.tempC,
+        humidityPct: station.humidityPct,
+        windDir: station.windDir,
+        windSpdKmh: station.windSpdKmh,
+        windGustKmh: station.windGustKmh,
+        primaryFuelModel: station.primary.model,
+        primaryFuelName: station.primary.name,
+        secondaryFuelModel: station.secondary.model,
+        secondaryFuelName: station.secondary.name,
       },
-    });
-  }
-  return stations;
+    }];
+  });
 }
 
 // Best-effort: a fetch failure serves the last good cache (if any) rather than
