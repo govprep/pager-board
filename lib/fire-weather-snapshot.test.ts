@@ -11,4 +11,10 @@ test("stored snapshots round-trip and reject malformed state", () => {
   assert.deepEqual(parseStoredFireWeatherSnapshot(JSON.parse(JSON.stringify(stored))), stored);
   assert.equal(parseStoredFireWeatherSnapshot({ stations: [], sourceStationCount: 4 }), null);
   assert.equal(parseStoredFireWeatherSnapshot({ fetchedAt: "bad", stations: [], sourceStationCount: 4 }), null);
+  assert.equal(parseStoredFireWeatherSnapshot({
+    fetchedAt: "2026-09-21T03:00:00.000Z",
+    stations: [],
+    sourceStationCount: 4,
+    coverage: { type: "nope", features: [] },
+  }), null);
 });

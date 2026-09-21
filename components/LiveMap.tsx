@@ -40,6 +40,7 @@ import type {
   CurrentFireWeatherStation,
   StationFuelObservation,
 } from "@/lib/fire-weather-observations";
+import type { FireWeatherCoverage } from "@/lib/fire-weather-coverage";
 
 // ── what the map holds ──────────────────────────────────────────────────────
 
@@ -197,9 +198,16 @@ const LEGEND: { cls: string; label: string }[] = [
 // legible at state zoom, but a clustered source has nothing left to make a heat
 // map out of — the points have already been collapsed — so the heat layer and
 // the new-job pulse read the plain one.
-const SRC = { plain: "jobs", clustered: "jobs-clustered", weather: "fire-weather-stations" };
+const SRC = {
+  plain: "jobs",
+  clustered: "jobs-clustered",
+  weather: "fire-weather-stations",
+  weatherCoverage: "fire-weather-coverage",
+};
 const LYR = {
-  weatherSurface: "fire-weather-surface",
+  weatherOuter: "fire-weather-outer",
+  weatherMiddle: "fire-weather-middle",
+  weatherCore: "fire-weather-core",
   weatherStation: "fire-weather-station",
   weatherLabel: "fire-weather-label",
   weatherSelected: "fire-weather-selected",
@@ -213,6 +221,15 @@ const LYR = {
   selected: "jobs-selected",
   label: "jobs-label",
 };
+const WEATHER_SURFACE_LAYERS = [LYR.weatherOuter, LYR.weatherMiddle, LYR.weatherCore] as const;
+
+function weatherFillOpacity(base: number): mapboxgl.ExpressionSpecification {
+  return [
+    "*",
+    ["case", ["==", ["get", "incomplete"], true], base * 0.72, base],
+    ["interpolate", ["linear"], ["zoom"], 8, 1, 9.6, 0],
+  ];
+}
 
 // ── the pins ────────────────────────────────────────────────────────────────
 
@@ -620,7 +637,7 @@ function WeatherModal({
             <p className="weather-quality">No FBI is available for either fuel at this station, so it does not colour the heat surface.</p>
           )}
           <p className="map-weather-caveat">
-            The surface is an interpolation of station observations, not a gridded forecast. The map uses the higher FBI from fuel types 1 and 2 at each station.
+            The shade is bounded station influence, not a gridded forecast: strongest within 20 km, fading to a hard 60 km limit, with the nearest station owning overlaps. The map uses the higher FBI from fuel types 1 and 2 at each station.
           </p>
         </div>
       </div>
@@ -650,6 +667,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   const [heat, setHeat] = useState(true);
   const [weatherMode, setWeatherMode] = useState<WeatherMode>("fdr");
   const [weatherStations, setWeatherStations] = useState<CurrentFireWeatherStation[]>([]);
+  const [weatherCoverage, setWeatherCoverage] = useState<FireWeatherCoverage>({
+    type: "FeatureCollection",
+    features: [],
+  });
   const [weatherSourceCount, setWeatherSourceCount] = useState(0);
   const [weatherFetchedAt, setWeatherFetchedAt] = useState<string | null>(null);
   const [weatherStale, setWeatherStale] = useState(false);
@@ -681,6 +702,8 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     type: "FeatureCollection",
     features: [],
   });
+  const weatherCoverageRef = useRef<FireWeatherCoverage>({ type: "FeatureCollection", features: [] });
+  const weatherStationsRef = useRef<CurrentFireWeatherStation[]>([]);
   const loadSequence = useRef(0);
   // Each job's resources as the last pass saw them — the baseline for both
   // "this job is new" and "this resource just joined it".
@@ -709,6 +732,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   useEffect(() => { soundRef.current = sound; }, [sound]);
   useEffect(() => { heatRef.current = heat; }, [heat]);
   useEffect(() => { weatherModeRef.current = weatherMode; }, [weatherMode]);
+  useEffect(() => { weatherStationsRef.current = weatherStations; }, [weatherStations]);
   useEffect(() => { hoursRef.current = hours; }, [hours]);
   useEffect(() => { selectedRef.current = selectedKey; }, [selectedKey]);
   useEffect(() => { selectedWeatherRef.current = selectedWeatherId; }, [selectedWeatherId]);
@@ -747,6 +771,12 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       if (!Array.isArray(data.stations)) throw new Error("invalid station response");
       const stations = data.stations as CurrentFireWeatherStation[];
       setWeatherStations(stations);
+      const coverage = data.coverage;
+      setWeatherCoverage(
+        coverage?.type === "FeatureCollection" && Array.isArray(coverage.features)
+          ? coverage as FireWeatherCoverage
+          : { type: "FeatureCollection", features: [] },
+      );
       setWeatherSourceCount(typeof data.sourceStationCount === "number" ? data.sourceStationCount : stations.length);
       setWeatherFetchedAt(typeof data.fetchedAt === "string" ? data.fetchedAt : null);
       setWeatherStale(data.stale === true);
@@ -1122,27 +1152,53 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   const installLayers = useCallback((map: mapboxgl.Map) => {
     const data = dataRef.current;
     const weatherData = weatherDataRef.current;
+    const weatherCoverage = weatherCoverageRef.current;
 
     if (!map.getSource(SRC.weather)) {
       map.addSource(SRC.weather, { type: "geojson", data: weatherData });
     }
+    if (!map.getSource(SRC.weatherCoverage)) {
+      map.addSource(SRC.weatherCoverage, { type: "geojson", data: weatherCoverage });
+    }
 
-    // A data-driven, blurred circle surface rather than Mapbox's density
-    // heatmap: density colours how many stations overlap, while this product
-    // must colour each observation by its AFDRS band/FBI. Higher FBI stations
-    // sort on top where influence circles overlap.
-    if (!map.getLayer(LYR.weatherSurface)) {
+    // Three nested, physical-distance bands communicate diminishing confidence.
+    // Their polygons are already clipped to land and to the station's nearest-
+    // neighbour cell by the feeder, so rendering stays cheap on every browser.
+    if (!map.getLayer(LYR.weatherOuter)) {
       map.addLayer({
-        id: LYR.weatherSurface,
-        type: "circle",
-        source: SRC.weather,
-        filter: ["all", [">=", ["get", "maxFbi"], 0], ["==", ["get", "old"], false]],
-        layout: { "circle-sort-key": ["get", "maxFbi"] },
+        id: LYR.weatherOuter,
+        type: "fill",
+        source: SRC.weatherCoverage,
+        maxzoom: 9.6,
+        filter: ["==", ["get", "radiusKm"], 60],
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 32, 7, 58, 10, 88, 13, 130],
-          "circle-color": weatherColor(weatherModeRef.current),
-          "circle-opacity": ["case", ["==", ["get", "incomplete"], true], 0.32, 0.46],
-          "circle-blur": 0.72,
+          "fill-color": weatherColor(weatherModeRef.current),
+          "fill-opacity": weatherFillOpacity(0.12),
+          "fill-antialias": false,
+        },
+      });
+      map.addLayer({
+        id: LYR.weatherMiddle,
+        type: "fill",
+        source: SRC.weatherCoverage,
+        maxzoom: 9.6,
+        filter: ["==", ["get", "radiusKm"], 40],
+        paint: {
+          "fill-color": weatherColor(weatherModeRef.current),
+          "fill-opacity": weatherFillOpacity(0.16),
+          "fill-antialias": false,
+        },
+      });
+      map.addLayer({
+        id: LYR.weatherCore,
+        type: "fill",
+        source: SRC.weatherCoverage,
+        maxzoom: 9.6,
+        filter: ["==", ["get", "radiusKm"], 20],
+        paint: {
+          "fill-color": weatherColor(weatherModeRef.current),
+          "fill-opacity": weatherFillOpacity(0.24),
+          "fill-antialias": false,
         },
       });
     }
@@ -1399,7 +1455,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     // that isn't coming.
     const showWeather = weatherModeRef.current !== "off";
     map.setLayoutProperty(LYR.heat, "visibility", heatRef.current && !showWeather ? "visible" : "none");
-    for (const id of [LYR.weatherSurface, LYR.weatherStation, LYR.weatherSelected]) {
+    for (const id of [...WEATHER_SURFACE_LAYERS, LYR.weatherStation, LYR.weatherSelected]) {
       map.setLayoutProperty(id, "visibility", showWeather ? "visible" : "none");
     }
     map.setLayoutProperty(LYR.weatherLabel, "visibility", weatherModeRef.current === "fbi" ? "visible" : "none");
@@ -1409,6 +1465,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       (map.getSource(id) as GeoJSONSource | undefined)?.setData(dataRef.current);
     }
     (map.getSource(SRC.weather) as GeoJSONSource | undefined)?.setData(weatherDataRef.current);
+    (map.getSource(SRC.weatherCoverage) as GeoJSONSource | undefined)?.setData(weatherCoverageRef.current);
   }, []);
 
   // Build the map once. Style changes and data updates are applied to it in
@@ -1476,9 +1533,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       });
     });
     // Jobs win when a weather surface and a job overlap. Otherwise any point on
-    // the coloured surface opens the nearest station contributing at that
-    // pixel; the exact station is named in the modal so interpolation is never
-    // presented as though it were a reading taken at the clicked coordinates.
+    // the coloured surface opens the nearest contributing station.
     map.on("click", (e) => {
       const hits = map.queryRenderedFeatures(e.point, {
         layers: [LYR.point, LYR.clusters].filter((id) => map.getLayer(id)),
@@ -1487,17 +1542,18 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
 
       if (weatherModeRef.current !== "off") {
         const weatherHits = map.queryRenderedFeatures(e.point, {
-          layers: [LYR.weatherStation, LYR.weatherSurface].filter((id) => map.getLayer(id)),
+          layers: [LYR.weatherStation, ...WEATHER_SURFACE_LAYERS].filter((id) => map.getLayer(id)),
         });
         let nearest: { id: string; distance: number } | null = null;
         const seen = new Set<string>();
         for (const hit of weatherHits) {
           const feature = clicked(hit);
           const id = feature?.properties?.id;
-          const coordinates = feature?.geometry?.coordinates;
-          if (typeof id !== "string" || !coordinates || seen.has(id)) continue;
+          if (typeof id !== "string" || seen.has(id)) continue;
           seen.add(id);
-          const point = map.project(coordinates);
+          const station = weatherStationsRef.current.find((candidate) => candidate.id === id);
+          if (!station) continue;
+          const point = map.project([station.lng, station.lat]);
           const distance = Math.hypot(point.x - e.point.x, point.y - e.point.y);
           if (!nearest || distance < nearest.distance) nearest = { id, distance };
         }
@@ -1513,7 +1569,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       selectedWeatherRef.current = null;
       setSelectedWeatherId(null);
     });
-    for (const id of [LYR.point, LYR.clusters, LYR.weatherStation]) {
+    for (const id of [LYR.point, LYR.clusters, LYR.weatherStation, ...WEATHER_SURFACE_LAYERS]) {
       map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
       map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
     }
@@ -1542,10 +1598,14 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   useEffect(() => {
     const features = weatherStations.map((station) => weatherFeature(station, weatherStale));
     weatherDataRef.current = { type: "FeatureCollection", features };
+    weatherCoverageRef.current = weatherStale
+      ? { type: "FeatureCollection", features: [] }
+      : weatherCoverage;
     const map = mapRef.current;
     if (!map || !layersReady.current) return;
     (map.getSource(SRC.weather) as GeoJSONSource | undefined)?.setData(weatherDataRef.current);
-  }, [weatherStations, weatherStale]);
+    (map.getSource(SRC.weatherCoverage) as GeoJSONSource | undefined)?.setData(weatherCoverageRef.current);
+  }, [weatherStations, weatherCoverage, weatherStale]);
 
   // Frame the traffic the first time there is any. Only once: a map that
   // re-framed itself every time a page arrived would move under the hand of
@@ -1588,15 +1648,15 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.getLayer(LYR.weatherSurface)) return;
+    if (!map || !map.getLayer(LYR.weatherOuter)) return;
     const show = weatherMode !== "off";
-    for (const id of [LYR.weatherSurface, LYR.weatherStation, LYR.weatherSelected]) {
+    for (const id of [...WEATHER_SURFACE_LAYERS, LYR.weatherStation, LYR.weatherSelected]) {
       map.setLayoutProperty(id, "visibility", show ? "visible" : "none");
     }
     map.setLayoutProperty(LYR.weatherLabel, "visibility", weatherMode === "fbi" ? "visible" : "none");
     if (show) {
       const color = weatherColor(weatherMode);
-      map.setPaintProperty(LYR.weatherSurface, "circle-color", color);
+      for (const id of WEATHER_SURFACE_LAYERS) map.setPaintProperty(id, "fill-color", color);
       map.setPaintProperty(LYR.weatherStation, "circle-color", [
         "case",
         ["any", ["<", ["get", "maxFbi"], 0], ["==", ["get", "old"], true]],
@@ -1891,7 +1951,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
                       ` ${weatherStations.length} are located; ${weatherSourceCount - weatherStations.length} cannot be mapped because the feed has no coordinates.`}
                     {weatherFetchedAt && ` Refreshed ${relativeAge(weatherFetchedAt, now)} ago.`}
                     {weatherStale && " Serving the last good snapshot."}
-                    {" "}Highest of fuel types 1 and 2. Tap the surface for the nearest contributing station.
+                    {" "}Highest of fuel types 1 and 2. Strongest within 20 km, fading to zero at 60 km and disappearing at local zoom. Tap the shade for the nearest contributing station.
                   </span>
                 </div>
               )}

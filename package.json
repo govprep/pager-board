@@ -24,6 +24,9 @@
   "dependencies": {
     "@supabase/realtime-js": "^2.108.2",
     "@supabase/supabase-js": "^2.108.2",
+    "@turf/helpers": "^7.4.0",
+    "@turf/intersect": "^7.4.0",
+    "@turf/voronoi": "^7.4.0",
     "jose": "^6.2.3",
     "mapbox-gl": "^3.25.0",
     "next": "^16.2.9",
