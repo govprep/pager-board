@@ -41,6 +41,7 @@ import type {
   StationFuelObservation,
 } from "@/lib/fire-weather-observations";
 import type { FireWeatherCoverage } from "@/lib/fire-weather-coverage";
+import { weatherFillOpacity } from "@/lib/fire-weather-map-style";
 
 // ── what the map holds ──────────────────────────────────────────────────────
 
@@ -222,14 +223,6 @@ const LYR = {
   label: "jobs-label",
 };
 const WEATHER_SURFACE_LAYERS = [LYR.weatherOuter, LYR.weatherMiddle, LYR.weatherCore] as const;
-
-function weatherFillOpacity(base: number): mapboxgl.ExpressionSpecification {
-  return [
-    "*",
-    ["case", ["==", ["get", "incomplete"], true], base * 0.72, base],
-    ["interpolate", ["linear"], ["zoom"], 8, 1, 9.6, 0],
-  ];
-}
 
 // ── the pins ────────────────────────────────────────────────────────────────
 
