@@ -1869,86 +1869,29 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   to   { opacity: 0; }
 }
 
-/* The key. Under the window picker on a pointer, where there is room for it to
-   simply be open; a tap-to-open pill on a phone, where there isn't. */
-.map-legend {
-  position: absolute;
-  top: 58px;
-  left: 12px;
-  z-index: 2;
-}
-.map-legend-toggle { display: none; }
-.map-legend-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--glass);
-  border: 1px solid var(--glass-border);
-  backdrop-filter: blur(10px);
-  box-shadow: var(--glass-shadow);
-  font-size: 11.5px;
-  color: var(--text-2);
-}
-.map-legend-heading {
-  color: var(--text);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-.map-fire-key {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-bottom: 9px;
-  margin-bottom: 3px;
-  border-bottom: 1px solid var(--glass-border);
-}
-.map-legend-swatch {
-  width: 18px;
-  height: 9px;
-  border-radius: 2px;
-  border: 1px solid rgba(255, 255, 255, 0.48);
-  flex: none;
-}
-.map-legend-swatch.unavailable { background: #64748b; }
-.map-legend-row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.map-legend-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.9);
-  flex: none;
-}
-/* The marker a job gets when all we know is its suburb — a soft ring, matching
-   what the map draws for it. */
-.map-legend-dot.approx {
-  background: transparent;
-  border: 1.5px dashed rgba(255, 255, 255, 0.5);
-}
-.map-legend-note {
-  max-width: 200px;
-  color: var(--text-3);
-  line-height: 1.45;
-  white-space: normal;
-}
-
-/* The card a marker opens. Not modal — the map behind it stays live, and opening
-   another marker simply moves the card — so it takes the corner rather than the
-   screen. On a phone it becomes a sheet at the bottom, under the thumb. */
-.map-card {
+/* Incident and weather cards share the bottom of the map without owning it.
+   They remain independent, so opening one never dismisses the other. */
+.map-card-stack {
   position: absolute;
   z-index: 5;
-  left: 12px;
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  inset: 12px 82px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+.map-card {
+  position: relative;
+  flex: 0 1 360px;
   width: min(360px, calc(100% - 24px));
+  max-height: 100%;
   background: var(--surface);
   border: 1px solid var(--border-2);
   border-radius: 12px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
-  overflow: hidden;
+  overflow-y: auto;
+  pointer-events: auto;
   animation: map-card-in 180ms ease-out;
 }
 @keyframes map-card-in {
@@ -2000,15 +1943,31 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
 .map-card-actions { display: flex; gap: 8px; }
 .map-card-actions .map-link { margin-left: 0; padding: 6px 12px; font-size: 12px; }
 
-/* The station observation opens in the board's existing modal language rather
-   than in the compact incident map card: it has enough weather and fuel detail
-   to need the room, and focus should stay inside while it is being read. */
-.weather-modal { max-width: 560px; }
-.weather-modal-title {
+/* A weather observation is a map card, not a page-level modal. */
+.map-weather-card {
+  position: relative;
+  flex: 0 1 420px;
+  width: min(420px, calc(100% - 24px));
+  max-height: 100%;
+  overflow-y: auto;
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+  pointer-events: auto;
+  animation: map-card-in 180ms ease-out;
+}
+.weather-card-title {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 7px;
+}
+.weather-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 14px 14px;
 }
 .weather-rating {
   display: inline-flex;
@@ -2066,14 +2025,6 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   font-size: 11px;
   line-height: 1.45;
 }
-.map-weather-caveat {
-  padding-left: 9px;
-  border-left: 2px solid var(--text-3);
-  color: var(--text-2);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
 /* Mapbox's own controls, dressed to match. The attribution stays — it is a
    condition of using the tiles — but it doesn't have to be a white bar. */
 .map-stage .mapboxgl-ctrl-attrib {
@@ -2134,47 +2085,19 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
     width: auto;
   }
 
-  /* The key opens on demand rather than sitting over the map. */
-  .map-legend { top: 58px; left: auto; right: 10px; }
-  .map-legend-toggle {
-    display: inline-flex;
-    align-items: center;
-    height: 36px;
-    padding: 0 13px;
-    border-radius: 8px;
-    background: var(--glass);
-    border: 1px solid var(--glass-border);
-    backdrop-filter: blur(10px);
-    box-shadow: var(--glass-shadow);
-    color: var(--text-2);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+  /* Keep both pop-ups on the map and stack them when the screen cannot hold
+     them side by side. The incident stays nearest the thumb. */
+  .map-card-stack {
+    inset: 104px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    flex-direction: column-reverse;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 10px;
   }
-  .map-legend-body { display: none; }
-  .map-legend.open .map-legend-toggle { color: var(--text); }
-  .map-legend.open .map-legend-body {
-    display: flex;
-    position: absolute;
-    top: 42px;
-    right: 0;
-    max-height: calc(100dvh - var(--topbar-h) - 120px);
-    overflow-y: auto;
-  }
-
-  /* A sheet, not a card: full width, at the bottom, sized to its content up to
-     about two thirds of the screen. */
-  .map-card {
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: auto;
-    max-height: 62dvh;
-    overflow-y: auto;
-    border-radius: 14px 14px 0 0;
-    border-bottom: none;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+  .map-card, .map-weather-card { width: auto; flex-basis: auto; }
+  .map-card-stack.both > .map-card,
+  .map-card-stack.both > .map-weather-card {
+    max-height: calc((100% - 10px) / 2);
   }
   .map-card-actions .map-link { padding: 9px 14px; }
 
@@ -2185,8 +2108,6 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
     transform: none;
     width: auto;
   }
-  .weather-modal-overlay { padding: 10px; }
-  .weather-modal { max-height: calc(100dvh - var(--topbar-h) - 20px); }
   .weather-reading-grid, .weather-fuels { grid-template-columns: 1fr; }
 
   /* Pinch and double-tap do this job on a touchscreen, and the buttons would sit
