@@ -41,6 +41,7 @@ import type {
 } from "@/lib/fire-weather-observations";
 import type { FireWeatherCoverage } from "@/lib/fire-weather-coverage";
 import { weatherFillOpacity } from "@/lib/fire-weather-map-style";
+import { demoFireWeather, demoIncidents } from "@/lib/map-demo";
 
 // ── what the map holds ──────────────────────────────────────────────────────
 
@@ -547,11 +548,13 @@ function WeatherCard({
   station,
   now,
   snapshotStale,
+  synthetic,
   onClose,
 }: {
   station: CurrentFireWeatherStation;
   now: number;
   snapshotStale: boolean;
+  synthetic: boolean;
   onClose: () => void;
 }) {
   const rating = ratingFor(station.maxFdr);
@@ -559,7 +562,7 @@ function WeatherCard({
   return (
     <div
       role="dialog"
-      aria-label={`Live fire weather observation at ${station.name}`}
+      aria-label={`${synthetic ? "Synthetic" : "Live"} fire weather observation at ${station.name}`}
       className="map-weather-card"
     >
       <div className="map-card-head">
@@ -653,7 +656,13 @@ function WeatherCard({
 
 type Toast = { key: string; label: string; place: string; at: number };
 
-export default function LiveMap({ getToken }: { getToken: () => string | null }) {
+export default function LiveMap({
+  getToken,
+  demo = false,
+}: {
+  getToken: () => string | null;
+  demo?: boolean;
+}) {
   const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -770,22 +779,22 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       const data = await res.json();
       if (!Array.isArray(data.stations)) throw new Error("invalid station response");
       const stations = data.stations as CurrentFireWeatherStation[];
-      setWeatherStations(stations);
-      const coverage = data.coverage;
-      setWeatherCoverage(
-        coverage?.type === "FeatureCollection" && Array.isArray(coverage.features)
-          ? coverage as FireWeatherCoverage
-          : { type: "FeatureCollection", features: [] },
-      );
-      setWeatherStale(data.stale === true);
+      const coverage = data.coverage?.type === "FeatureCollection" && Array.isArray(data.coverage.features)
+        ? data.coverage as FireWeatherCoverage
+        : { type: "FeatureCollection", features: [] } as FireWeatherCoverage;
+      const display = demo ? demoFireWeather(stations, coverage) : { stations, coverage };
+      setWeatherStations(display.stations);
+      setWeatherCoverage(display.coverage);
+      setWeatherStale(demo ? false : data.stale === true);
       setWeatherError("");
     } catch {
       setWeatherError("Fire weather observations are temporarily unavailable.");
     }
-  }, []);
+  }, [demo]);
 
   useEffect(() => {
     void loadWeather();
+    if (demo) return;
     const timer = setInterval(() => void loadWeather(), WEATHER_REFRESH_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") void loadWeather();
@@ -797,9 +806,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [loadWeather]);
+  }, [demo, loadWeather]);
 
   const fetchPage = useCallback(async (before?: Incident): Promise<Incident[] | null> => {
+    if (demo) return before ? [] : demoIncidents();
     try {
       const auth = tokenRef.current();
       const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
@@ -817,7 +827,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     } catch {
       return null;
     }
-  }, []);
+  }, [demo]);
 
   // Pull enough pages to cover the window, newest first, stopping as soon as a
   // page reaches past the cutoff. A quiet four hours is one request; picking 24
@@ -859,6 +869,10 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
   // the foreground — the same trio the board runs on (components/PagerBoard.tsx),
   // for the same reasons.
   useEffect(() => {
+    if (demo) {
+      const tick = setInterval(() => setNow(Date.now()), TICK_MS);
+      return () => clearInterval(tick);
+    }
     const channel = getBrowserClient()
       .channel("incidents-map")
       .on(
@@ -904,7 +918,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       window.removeEventListener("focus", onVisible);
       window.removeEventListener("pageshow", onVisible);
     };
-  }, [load]);
+  }, [demo, load]);
 
   // Jobs that *started* inside the window. Merged first and filtered after, so a
   // job keeps the fullest copy of its address and its real start time rather
@@ -1804,12 +1818,12 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
           ← Board
         </Link>
 
-        <EnableAlerts lgaOptions={lgaOptions} />
+        {!demo && <EnableAlerts lgaOptions={lgaOptions} />}
 
         {/* One item, so a phone too narrow for a single row wraps the dot and
             the clock together rather than splitting the readout. */}
         <div className="topbar-status">
-          <LiveDot state={live} />
+          {demo ? <span className="demo-status">Synthetic</span> : <LiveDot state={live} />}
           <Clock />
         </div>
       </header>
@@ -1825,7 +1839,13 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
         {/* The canvas stays mounted even once Mapbox has reported a problem —
             the map instance holds this element, and pulling it out from under a
             live instance is its own crash. The notice covers it instead. */}
-        {token && <div ref={container} className="map-canvas" aria-label="Map of recent incidents" />}
+        {token && (
+          <div
+            ref={container}
+            className="map-canvas"
+            aria-label={demo ? "Map of synthetic incidents and fire weather" : "Map of recent incidents"}
+          />
+        )}
         {(!token || mapFailed) && (
           <div className="map-unavailable" role="status">
             <p>The map is unavailable.</p>
@@ -1842,6 +1862,12 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
             one. */}
         {token && !mapFailed && (
           <>
+          {demo && (
+            <div className="map-demo-banner" role="status">
+              <strong>Synthetic data</strong>
+              <span>Not live observations or incidents</span>
+            </div>
+          )}
           {/* Window picker — the one control that changes what the map is *of*,
               so it sits alone at the top rather than in the tool stack. */}
           <div className="map-hud" role="group" aria-label="Time window">
@@ -1867,14 +1893,14 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
             <button
               type="button"
               className={`map-tool fire${weatherMode !== "off" ? " on" : ""}`}
-              aria-label={`Live fire weather observations: ${weatherMode === "off" ? "off" : weatherMode.toUpperCase()}. Activate to show the next mode.`}
+              aria-label={`${demo ? "Synthetic" : "Live"} fire weather observations: ${weatherMode === "off" ? "off" : weatherMode.toUpperCase()}. Activate to show the next mode.`}
               aria-pressed={weatherMode !== "off"}
               title={
                 weatherMode === "fdr"
-                  ? "Live fire weather observations — AFDRS view. Click for numerical FBI."
+                  ? `${demo ? "Synthetic" : "Live"} fire weather observations — AFDRS view. Click for numerical FBI.`
                   : weatherMode === "fbi"
-                    ? "Live fire weather observations — numerical FBI. Click to turn off."
-                    : "Live fire weather observations — off. Click for AFDRS view."
+                    ? `${demo ? "Synthetic" : "Live"} fire weather observations — numerical FBI. Click to turn off.`
+                    : `${demo ? "Synthetic" : "Live"} fire weather observations — off. Click for AFDRS view.`
               }
               onClick={cycleWeather}
             >
@@ -1974,6 +2000,7 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
                   station={selectedWeather}
                   now={now}
                   snapshotStale={weatherStale}
+                  synthetic={demo}
                   onClose={() => {
                     selectedWeatherRef.current = null;
                     setSelectedWeatherId(null);

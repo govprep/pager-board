@@ -4,6 +4,11 @@ export const dynamic = "force-dynamic";
 
 // The live map, gated by the same per-device invite as the board — see the note
 // in app/page.tsx for why nothing is prefetched server-side.
-export default function MapPage() {
-  return <AccessGate view="map" />;
+export default async function MapPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ demo?: string | string[] }>;
+}) {
+  const { demo } = await searchParams;
+  return <AccessGate view="map" demo={demo === "weather"} />;
 }

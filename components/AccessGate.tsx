@@ -61,7 +61,13 @@ async function enroll(code: string): Promise<Enrollment> {
   }
 }
 
-export default function AccessGate({ view = "board" }: { view?: "board" | "raw" | "map" }) {
+export default function AccessGate({
+  view = "board",
+  demo = false,
+}: {
+  view?: "board" | "raw" | "map";
+  demo?: boolean;
+}) {
   const [phase, setPhase] = useState<Phase>("checking");
   const [deviceToken, setDeviceToken] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState("");
@@ -232,7 +238,7 @@ export default function AccessGate({ view = "board" }: { view?: "board" | "raw" 
   }
   if (phase === "authed") {
     if (view === "raw") return <RawFeed getToken={() => accessRef.current} />;
-    if (view === "map") return <LiveMap getToken={() => accessRef.current} />;
+    if (view === "map") return <LiveMap getToken={() => accessRef.current} demo={demo} />;
     return <PagerBoard getToken={() => accessRef.current} onSignOut={signOut} />;
   }
 

@@ -1701,6 +1701,38 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
   height: 100%;
 }
 
+.demo-status {
+  color: #fda4af;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.map-demo-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  transform: translateX(-50%);
+  padding: 7px 11px;
+  border: 1px solid #fb7185;
+  border-radius: 8px;
+  background: rgba(76, 5, 25, 0.94);
+  box-shadow: var(--glass-shadow);
+  color: #ffe4e6;
+  white-space: nowrap;
+}
+.map-demo-banner strong {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.map-demo-banner span { color: #fecdd3; font-size: 11px; }
+
 .map-unavailable {
   position: absolute;
   inset: 0;
@@ -2095,6 +2127,13 @@ tbody tr.data-row.changed { animation: row-new-pulse 1120ms step-end 3; }
     right: 10px;
     transform: none;
     width: auto;
+  }
+  .map-demo-banner {
+    top: 104px;
+    left: 10px;
+    right: 10px;
+    justify-content: center;
+    transform: none;
   }
 
   /* Keep both pop-ups on the map and stack them when the screen cannot hold
