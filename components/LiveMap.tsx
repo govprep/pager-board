@@ -122,6 +122,43 @@ const AFDRS = [
   { name: "Catastrophic", min: 100, color: "#ad0909" },
 ] as const;
 
+const WEATHER_BADGE_IDS = AFDRS.map((_, index) => `fire-weather-badge-${index}`);
+const WEATHER_BADGE_UNAVAILABLE = "fire-weather-badge-unavailable";
+const WEATHER_BADGE_SELECTED = "fire-weather-badge-selected";
+
+function weatherBadgeImage(border: string, selected = false): ImageData {
+  const size = selected ? 72 : 64;
+  const inset = selected ? 5 : 6;
+  const radius = selected ? 16 : 14;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Unable to draw fire weather badge");
+
+  context.beginPath();
+  context.roundRect(inset, inset, size - inset * 2, size - inset * 2, radius);
+  context.fillStyle = "rgba(8, 12, 20, 0.96)";
+  context.fill();
+  context.strokeStyle = border;
+  context.lineWidth = selected ? 5 : 6;
+  context.stroke();
+  return context.getImageData(0, 0, size, size);
+}
+
+function installWeatherBadgeImages(map: mapboxgl.Map): void {
+  AFDRS.forEach((rating, index) => {
+    const id = WEATHER_BADGE_IDS[index];
+    if (!map.hasImage(id)) map.addImage(id, weatherBadgeImage(rating.color), { pixelRatio: 2 });
+  });
+  if (!map.hasImage(WEATHER_BADGE_UNAVAILABLE)) {
+    map.addImage(WEATHER_BADGE_UNAVAILABLE, weatherBadgeImage("#64748b"), { pixelRatio: 2 });
+  }
+  if (!map.hasImage(WEATHER_BADGE_SELECTED)) {
+    map.addImage(WEATHER_BADGE_SELECTED, weatherBadgeImage("#ffffff", true), { pixelRatio: 2 });
+  }
+}
+
 function ratingFor(code: number | null | undefined) {
   return code != null && code >= 0 && code < AFDRS.length ? AFDRS[code] : null;
 }
@@ -197,7 +234,6 @@ const LYR = {
   weatherMiddle: "fire-weather-middle",
   weatherCore: "fire-weather-core",
   weatherStation: "fire-weather-station",
-  weatherLabel: "fire-weather-label",
   weatherSelected: "fire-weather-selected",
   heat: "jobs-heat",
   approx: "jobs-approx",
@@ -1114,6 +1150,8 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     const weatherData = weatherDataRef.current;
     const weatherCoverage = weatherCoverageRef.current;
 
+    installWeatherBadgeImages(map);
+
     if (!map.getSource(SRC.weather)) {
       map.addSource(SRC.weather, { type: "geojson", data: weatherData });
     }
@@ -1163,45 +1201,53 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
       });
     }
 
-    // All located stations remain present, including missing/stale readings.
-    // Those are grey rather than being misrepresented as No Rating.
+    // A job is a circle; a weather station is a square badge. Icon and number
+    // share one symbol layer, so collision handling never leaves an unexplained
+    // coloured square behind after hiding its value.
     if (!map.getLayer(LYR.weatherStation)) {
       map.addLayer({
         id: LYR.weatherStation,
-        type: "circle",
-        source: SRC.weather,
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 9, 9, 12, 13, 15],
-          "circle-color": [
-            "case",
-            ["any", ["<", ["get", "maxFbi"], 0], ["==", ["get", "old"], true]],
-            "#64748b",
-            weatherColor(weatherModeRef.current),
-          ],
-          "circle-opacity": 0.92,
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": "rgba(255,255,255,0.95)",
-        },
-      });
-    }
-
-    if (!map.getLayer(LYR.weatherLabel)) {
-      map.addLayer({
-        id: LYR.weatherLabel,
         type: "symbol",
         source: SRC.weather,
-        minzoom: 4,
-        filter: [">=", ["get", "maxFbi"], 0],
+        minzoom: 5.2,
         layout: {
-          "text-field": ["to-string", ["get", "maxFbi"]],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 11, 9, 14, 13, 16],
+          "icon-image": [
+            "case",
+            ["any", ["<", ["get", "maxFbi"], 0], ["==", ["get", "old"], true]],
+            WEATHER_BADGE_UNAVAILABLE,
+            [
+              "match", ["get", "maxFdr"],
+              0, WEATHER_BADGE_IDS[0],
+              1, WEATHER_BADGE_IDS[1],
+              2, WEATHER_BADGE_IDS[2],
+              3, WEATHER_BADGE_IDS[3],
+              4, WEATHER_BADGE_IDS[4],
+              WEATHER_BADGE_UNAVAILABLE,
+            ],
+          ],
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 5.2, 0.72, 9, 0.88, 13, 1],
+          "icon-allow-overlap": false,
+          "icon-optional": false,
+          "text-field": [
+            "case",
+            ["any", ["<", ["get", "maxFbi"], 0], ["==", ["get", "old"], true]],
+            "–",
+            ["to-string", ["get", "maxFbi"]],
+          ],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 5.2, 11, 9, 14, 13, 16],
           "text-font": ["DIN Pro Bold", "Arial Unicode MS Bold"],
           "text-allow-overlap": false,
+          "text-optional": false,
+          "symbol-sort-key": [
+            "case",
+            ["==", ["get", "old"], true], 1000,
+            ["*", ["get", "maxFbi"], -1],
+          ],
         },
         paint: {
           "text-color": "#ffffff",
-          "text-halo-color": "rgba(0,0,0,0.95)",
-          "text-halo-width": 1.8,
+          "text-halo-color": "rgba(0,0,0,0.8)",
+          "text-halo-width": 0.6,
         },
       });
     }
@@ -1209,15 +1255,30 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     if (!map.getLayer(LYR.weatherSelected)) {
       map.addLayer({
         id: LYR.weatherSelected,
-        type: "circle",
+        type: "symbol",
         source: SRC.weather,
+        minzoom: 5.2,
         filter: ["==", ["get", "id"], ""],
+        layout: {
+          "icon-image": WEATHER_BADGE_SELECTED,
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 5.2, 0.72, 9, 0.88, 13, 1],
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "text-field": [
+            "case",
+            ["any", ["<", ["get", "maxFbi"], 0], ["==", ["get", "old"], true]],
+            "–",
+            ["to-string", ["get", "maxFbi"]],
+          ],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 5.2, 11, 9, 14, 13, 16],
+          "text-font": ["DIN Pro Bold", "Arial Unicode MS Bold"],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 7, 13, 12],
-          "circle-color": "rgba(0,0,0,0)",
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-opacity": 1,
+          "text-color": "#ffffff",
+          "text-halo-color": "rgba(0,0,0,0.8)",
+          "text-halo-width": 0.6,
         },
       });
     }
@@ -1417,7 +1478,6 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     for (const id of [...WEATHER_SURFACE_LAYERS, LYR.weatherStation, LYR.weatherSelected]) {
       map.setLayoutProperty(id, "visibility", showWeather ? "visible" : "none");
     }
-    map.setLayoutProperty(LYR.weatherLabel, "visibility", weatherModeRef.current === "fbi" ? "visible" : "none");
     map.setFilter(LYR.weatherSelected, ["==", ["get", "id"], selectedWeatherRef.current ?? ""]);
     map.setFilter(LYR.selected, ["==", ["get", "key"], selectedRef.current ?? " "]);
     for (const id of [SRC.plain, SRC.clustered]) {
@@ -1609,16 +1669,9 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
     for (const id of [...WEATHER_SURFACE_LAYERS, LYR.weatherStation, LYR.weatherSelected]) {
       map.setLayoutProperty(id, "visibility", show ? "visible" : "none");
     }
-    map.setLayoutProperty(LYR.weatherLabel, "visibility", show ? "visible" : "none");
     if (show) {
       const color = weatherColor(weatherMode);
       for (const id of WEATHER_SURFACE_LAYERS) map.setPaintProperty(id, "fill-color", color);
-      map.setPaintProperty(LYR.weatherStation, "circle-color", [
-        "case",
-        ["any", ["<", ["get", "maxFbi"], 0], ["==", ["get", "old"], true]],
-        "#64748b",
-        color,
-      ]);
     } else {
       selectedWeatherRef.current = null;
       setSelectedWeatherId(null);
