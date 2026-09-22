@@ -1825,7 +1825,16 @@ export default function LiveMap({ getToken }: { getToken: () => string | null })
               }
               onClick={cycleWeather}
             >
-              {weatherMode === "off" ? "Fire" : weatherMode.toUpperCase()}
+              <svg
+                className="map-tool-icon weather-tower-icon"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="6" r="1.5" />
+                <circle cx="5.5" cy="4" r="1.5" />
+                <circle cx="18.5" cy="4" r="1.5" />
+                <path d="M10.6 5.6 7 4.5M13.4 5.6 17 4.5M12 7.5V21M8.5 21 12 11l3.5 10M9.7 17h4.6" />
+              </svg>
             </button>
             <button
               type="button"
