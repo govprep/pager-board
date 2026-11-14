@@ -6,6 +6,10 @@
 
 import { standDownIncidentNo } from "./standdown";
 
+// One decoder emitted this specific page with a bogus timestamp.  Keep the
+// source record in /raw, but never let it create or refresh a board card.
+const BLOCKED_INCIDENT_RE = /\b26-131793\b/;
+
 // Structured pager line patterns — any one match is sufficient.
 const STRUCT_RE = /\s-\s|[A-Z]{2,}:|(\[[-\d.,]+\])/;
 // Catches repeating garbage like 754]0754]0754]0... or @@@@@@@@
@@ -27,6 +31,7 @@ const FRNSW_RE = /\bFRINC\b/i;
 
 export function isValidPagerLine(line: string): boolean {
   if (!line || line.length < 5) return false;
+  if (BLOCKED_INCIDENT_RE.test(line)) return false;
   // Must have at least one letter — pure digit/symbol strings are decode noise.
   if (!/[a-zA-Z]/.test(line)) return false;
   // Reject bracketed-digit corruption.

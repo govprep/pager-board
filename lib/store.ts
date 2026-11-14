@@ -39,6 +39,9 @@ export async function listIncidents(
   let q = supabase
     .from("incidents")
     .select(LIST_COLUMNS)
+    // The source record stays in pager_messages for auditability, but this
+    // decoder-corrupted page must not be visible if it predates the filter.
+    .neq("incident_no", "26-131793")
     .order("received_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(limit);
