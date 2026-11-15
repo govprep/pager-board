@@ -26,6 +26,7 @@ import type { Coords, Incident } from "@/lib/types";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { toIncident } from "@/lib/incident-row";
 import { hasIncidentNumber } from "@/lib/parser";
+import { isBlockedIncident } from "@/lib/blocked-incidents";
 import { mergeById, mergeEntries, splitAddress, typeClass, type Entry } from "@/lib/entries";
 import { placeJob } from "@/lib/incident-points";
 import { cachedGeocode, forwardGeocode } from "@/lib/geocode";
@@ -881,7 +882,10 @@ export default function LiveMap({
         (payload) => {
           const row = payload.eventType === "DELETE" ? null : payload.new;
           if (row && typeof row.id === "string") {
-            setIncidents((prev) => mergeById(prev, [toIncident(row)]));
+            const incident = toIncident(row);
+            if (!isBlockedIncident(incident.incidentNo)) {
+              setIncidents((prev) => mergeById(prev, [incident]));
+            }
           } else {
             // A DELETE payload carries only the key, so a wipe is re-read.
             void load(hoursRef.current);

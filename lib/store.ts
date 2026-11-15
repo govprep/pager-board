@@ -9,6 +9,7 @@ import { withInferredOrigin } from "./origin";
 import { toIncident } from "./incident-row";
 import { supabase } from "./supabase";
 import { incidentFilter, keysetFilter } from "./query";
+import { isBlockedIncident } from "./blocked-incidents";
 
 // ---------------------------------------------------------------------------
 // Supabase-backed store.  All functions are async.
@@ -52,7 +53,7 @@ export async function listIncidents(
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  return (data ?? []).map(toIncident);
+  return (data ?? []).map(toIncident).filter((incident) => !isBlockedIncident(incident.incidentNo));
 }
 
 export async function getIncident(id: string): Promise<Incident | undefined> {

@@ -5,10 +5,7 @@
 // Rejection only means "don't try to parse this into an incident".
 
 import { standDownIncidentNo } from "./standdown";
-
-// One decoder emitted this specific page with a bogus timestamp.  Keep the
-// source record in /raw, but never let it create or refresh a board card.
-const BLOCKED_INCIDENT_RE = /\b26-131793\b/;
+import { isBlockedIncident } from "./blocked-incidents";
 
 // Structured pager line patterns — any one match is sufficient.
 const STRUCT_RE = /\s-\s|[A-Z]{2,}:|(\[[-\d.,]+\])/;
@@ -31,7 +28,9 @@ const FRNSW_RE = /\bFRINC\b/i;
 
 export function isValidPagerLine(line: string): boolean {
   if (!line || line.length < 5) return false;
-  if (BLOCKED_INCIDENT_RE.test(line)) return false;
+  // One decoder emitted this specific page with a bogus timestamp. Keep the
+  // source record in /raw, but never let it create or refresh a board card.
+  if (isBlockedIncident(line.match(/\b\d{2}-\d{6}\b/)?.[0])) return false;
   // Must have at least one letter — pure digit/symbol strings are decode noise.
   if (!/[a-zA-Z]/.test(line)) return false;
   // Reject bracketed-digit corruption.

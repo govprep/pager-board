@@ -9,6 +9,7 @@ import type { Incident, FireWeather, PagerMessage, RawStatus } from "@/lib/types
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { toIncident } from "@/lib/incident-row";
 import { hasIncidentNumber } from "@/lib/parser";
+import { isBlockedIncident } from "@/lib/blocked-incidents";
 import { dedupeMessages } from "@/lib/incident-messages";
 import { lgaFromLocation, lgaKey } from "@/lib/lga";
 import {
@@ -853,7 +854,10 @@ export default function PagerBoard({
         { event: "*", schema: "public", table: "incidents" },
         (payload) => {
           const row = payload.eventType === "DELETE" ? null : payload.new;
-          if (row && typeof row.id === "string") applyRow(toIncident(row));
+          if (row && typeof row.id === "string") {
+            const incident = toIncident(row);
+            if (!isBlockedIncident(incident.incidentNo)) applyRow(incident);
+          }
           else { realtimeRevision.current += 1; scheduleRefresh(); }
         },
       )
